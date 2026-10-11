@@ -165,7 +165,9 @@ function updatePageIndicator(current, total) {
 // superseded this one mid-render, or when a legacy .doc was rejected (the
 // error is already in the status bar); the caller must then leave the UI alone.
 async function showDocument(bytes) {
-  const data = new Uint8Array(bytes);
+  // Keep the bridge's Uint8Array backing buffer; copying a large local PDF here
+  // needlessly doubles peak input memory before PDF.js even starts parsing it.
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   // Unrecognized bytes go to PDF.js, which reports its own precise error.
   const kind = detectDocumentKind(data) ?? "pdf";
   // A rejected legacy .doc touches nothing: the open document (or an open

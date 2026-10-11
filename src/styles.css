@@ -568,21 +568,15 @@ body.drag-active #empty-state #empty-state-text {
 }
 
 #pdf-pages {
-  display: grid;
-  grid-template-columns: repeat(var(--page-columns, 1), max-content);
-  gap: var(--page-gap, 16px);
-  width: max-content;
+  position: relative;
+  /* The viewer reserves document geometry and mounts only nearby page slots. */
   /* transform-origin is set to the top-left in JS (viewer.js), matching the
      pan/zoom math there, which treats (0, 0) as the content's anchor point. */
   will-change: transform;
 }
 
-#pdf-pages.single-page-mode {
-  grid-template-columns: max-content;
-}
-
 .pdf-page-slot {
-  position: relative;
+  position: absolute;
   display: flex;
   align-items: center;
   justify-content: center;
