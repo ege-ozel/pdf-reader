@@ -5,11 +5,12 @@ import {
   computeFitZoom as fitZoomForPages,
   computeFitPageZoom as fitPageZoomForPage,
   computePageColumns,
-  currentPageFromPositions,
   resolveDualPageMode,
 } from "./page-layout.js";
+import { layoutPages, pagesInWindow, pageAtY, rasterSize } from "./pdf-page-window.js";
+import { PdfRenderQueue } from "./pdf-render-queue.js";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdfjs/pdf.worker.mjs", import.meta.url).href;
 // JPEG 2000 / JBIG2 / color-profile decoders; without them scanned PDFs render blank.
 const WASM_URL = new URL("./vendor/pdfjs/wasm/", import.meta.url).href;
 // CMaps for CJK/CID-keyed fonts, base-14 standard font data, and the default
@@ -34,7 +35,10 @@ const FLING_TIME_CONSTANT = 325; // ms; larger = longer glide
 const FLING_MIN_SPEED = 0.02; // px/ms below which the glide stops
 const FLING_MAX_SPEED = 6; // px/ms cap so a flick can't launch the page
 const FLING_STALE_MS = 80; // finger paused longer than this before lift = no glide
-const PAGE_METADATA_BATCH_SIZE = 16;
+const MOBILE_RENDERING = window.matchMedia("(pointer: coarse)").matches;
+const CANVAS_PIXEL_BUDGET = (MOBILE_RENDERING ? 32 : 96) * 1024 * 1024 / 4;
+const MAX_PAGE_PIXELS = (MOBILE_RENDERING ? 4 : 8) * 1024 * 1024;
+const renderQueue = new PdfRenderQueue(MOBILE_RENDERING ? 1 : 2);
 // Minimum horizontal travel (px) of a one-finger swipe that flips the page in
 // paged mode when the page can't pan sideways (it already fits the width).
 const PAGE_SWIPE_THRESHOLD = 50;
@@ -58,7 +62,11 @@ let renderGeneration = 0;
 let statusCallback = null;
 let zoomDebounceTimer = null;
 let resizeDebounceTimer = null;
-let pageObserver = null;
+let pageRows = [];
+const mountedPages = new Set();
+let viewportFrame = 0;
+let layoutFrame = 0;
+let canvasPixelLimit = MAX_PAGE_PIXELS;
 let pendingZoomAnchor = null;
 let fitZoom = 1;
 let gesture = null;
@@ -113,7 +121,6 @@ function reportError(message) {
 
 function cancelPageRender(page) {
   page.renderToken += 1;
-  page.rendering = false;
   if (page.renderTask) {
     page.renderTask.cancel();
     page.renderTask = null;
@@ -121,15 +128,8 @@ function cancelPageRender(page) {
 }
 
 function cancelAllPageRenders() {
-  for (const page of pages) {
-    cancelPageRender(page);
-    if (page.canvas) {
-      page.canvas.width = 0;
-      page.canvas.height = 0;
-      page.canvas = null;
-    }
-    page.slot = null;
-  }
+  renderQueue.clear();
+  for (const page of mountedPages) unloadPage(page);
 }
 
 function contentSize() {
@@ -203,6 +203,7 @@ function updateView({ rerender = false, anchor = null } = {}) {
   clampPan();
   applyTransform();
   reportCurrentPage();
+  scheduleViewportRender();
   if (rerender) {
     if (anchor) pendingZoomAnchor = anchor;
     scheduleRerender();
@@ -217,16 +218,7 @@ function currentPageNumber() {
   const scale = zoomLevel / renderedZoom;
   const base = pagesWrapper.offsetTop + panY;
   const referenceY = containerInsets().top + 1;
-  const positions = [];
-  for (const page of pages) {
-    if (page.layoutTop == null) continue;
-    positions.push({
-      pageNumber: page.pageNumber,
-      top: base + page.layoutTop * scale,
-      bottom: base + page.layoutBottom * scale,
-    });
-  }
-  return currentPageFromPositions(positions, referenceY);
+  return pageAtY(pageRows, (referenceY - base) / scale);
 }
 
 function reportCurrentPage() {
@@ -264,7 +256,7 @@ function captureAnchor(point) {
   let nearestPage = null;
   let nearestDistance = Infinity;
 
-  for (const page of pages) {
+  for (const page of mountedPages) {
     if (!page.slot) continue;
     const rect = page.slot.getBoundingClientRect();
     if (clientPoint.x >= rect.left && clientPoint.x <= rect.right &&
@@ -298,11 +290,11 @@ function captureAnchor(point) {
 function restoreAnchor(anchor, targetZoom) {
   if (anchor?.pageNumber) {
     const page = pages[anchor.pageNumber - 1];
-    if (page?.slot) {
+    if (page?.layoutTop != null) {
       const scale = zoomLevel / targetZoom;
       const originTop = pagesWrapper.offsetTop;
-      const contentX = page.slot.offsetLeft + page.slot.offsetWidth * anchor.xRatio;
-      const contentY = originTop + page.slot.offsetTop + page.slot.offsetHeight * anchor.yRatio;
+      const contentX = page.layoutLeft + page.width * targetZoom * anchor.xRatio;
+      const contentY = originTop + page.layoutTop + page.height * targetZoom * anchor.yRatio;
       panX = anchor.point.x - contentX * scale;
       panY = anchor.point.y - contentY * scale;
       return;
@@ -419,7 +411,7 @@ export function goToPage(pageNumber) {
   stopFling();
   const scale = renderedZoom > 0 ? zoomLevel / renderedZoom : 1;
   panY = containerInsets().top - pagesWrapper.offsetTop - page.layoutTop * scale;
-  updateView({ rerender: true });
+  updateView();
 }
 
 // Zoom so the whole current page fits the viewport (both dimensions), unlike
@@ -486,7 +478,7 @@ export function getOpenPdf() {
 }
 
 function computeColumns(targetZoom) {
-  const widestPage = Math.max(...pages.map((page) => page.width));
+  const widestPage = pages.reduce((width, page) => Math.max(width, page.width), 0);
   const columns = computePageColumns(
     container.clientWidth,
     widestPage * targetZoom,
@@ -499,7 +491,7 @@ function computeColumns(targetZoom) {
 
 async function computeFitZoom() {
   if (!pdfDoc || pages.length === 0) return 1;
-  const widestPage = Math.max(...pages.map((page) => page.width));
+  const widestPage = pages.reduce((width, page) => Math.max(width, page.width), 0);
   const zoom = fitZoomForPages(
     container.clientWidth,
     widestPage,
@@ -509,31 +501,24 @@ async function computeFitZoom() {
   return Math.min(MAX_ZOOM, Math.max(minimumZoom(), zoom));
 }
 
-async function loadPageMetadata() {
-  const metadata = [];
-  for (let start = 1; start <= pdfDoc.numPages; start += PAGE_METADATA_BATCH_SIZE) {
-    const end = Math.min(pdfDoc.numPages, start + PAGE_METADATA_BATCH_SIZE - 1);
-    const batch = await Promise.all(
-      Array.from({ length: end - start + 1 }, async (_, index) => {
-        const pageNumber = start + index;
-        const page = await pdfDoc.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1 });
-        return {
-          pageNumber,
-          proxy: page,
-          width: viewport.width,
-          height: viewport.height,
-          slot: null,
-          canvas: null,
-          renderTask: null,
-          renderToken: 0,
-          rendering: false,
-        };
-      })
-    );
-    metadata.push(...batch);
-  }
-  return metadata;
+async function loadPageMetadata(doc) {
+  // Reserve estimated geometry without fetching every page. Mixed-size pages
+  // are corrected when visited, keeping the reader's focal point stable.
+  const firstPage = await doc.getPage(1);
+  const viewport = firstPage.getViewport({ scale: 1 });
+  firstPage.cleanup();
+  return Array.from({ length: doc.numPages }, (_, index) => ({
+    pageNumber: index + 1,
+    proxy: null,
+    width: viewport.width,
+    height: viewport.height,
+    slot: null,
+    canvas: null,
+    renderTask: null,
+    renderToken: 0,
+    rendering: false,
+    failedGeneration: null,
+  }));
 }
 
 function makePageSlot(page, targetZoom, animate) {
@@ -542,44 +527,37 @@ function makePageSlot(page, targetZoom, animate) {
   slot.dataset.pageNumber = String(page.pageNumber);
   slot.style.width = `${page.width * targetZoom}px`;
   slot.style.height = `${page.height * targetZoom}px`;
+  slot.style.left = `${page.layoutLeft}px`;
+  slot.style.top = `${page.layoutTop}px`;
   page.slot = slot;
   page.canvas = null;
   return slot;
 }
 
-function createObserver(generation) {
-  pageObserver?.disconnect();
-  if (!("IntersectionObserver" in window)) {
-    renderNearViewport(generation).catch((err) => {
+function scheduleViewportRender() {
+  if (!pdfDoc || viewportFrame) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = 0;
+    renderNearViewport(renderGeneration).catch((err) => {
       reportError(`Could not render PDF: ${err.message || err}`);
     });
-    return;
-  }
+  });
+}
 
-  pageObserver = new IntersectionObserver(
-    (entries) => {
-      if (generation !== renderGeneration) return;
-      for (const entry of entries) {
-        const pageNumber = Number(entry.target.dataset.pageNumber);
-        const page = pages[pageNumber - 1];
-        if (!page) continue;
-        if (entry.isIntersecting) {
-          renderPage(page, generation).catch((err) => {
-            reportError(`Could not render page ${pageNumber}: ${err.message || err}`);
-          });
-        } else {
-          unloadPage(page);
-        }
-      }
-    },
-    {
-      root: container,
-      rootMargin: `${Math.max(container.clientHeight, 1)}px 0px`,
-      threshold: 0,
+function scheduleMetadataLayout() {
+  if (layoutFrame) return;
+  layoutFrame = requestAnimationFrame(() => {
+    layoutFrame = 0;
+    if (!pdfDoc) return;
+    const anchor = captureAnchor({ x: container.clientWidth / 2, y: container.clientHeight / 2 });
+    updatePageLayout(renderedZoom);
+    for (const page of mountedPages) {
+      page.slot.style.left = `${page.layoutLeft}px`;
+      page.slot.style.top = `${page.layoutTop}px`;
     }
-  );
-
-  for (const page of pages) pageObserver.observe(page.slot);
+    restoreAnchor(anchor, renderedZoom);
+    updateView();
+  });
 }
 
 function unloadPage(page) {
@@ -588,12 +566,17 @@ function unloadPage(page) {
   // cached page proxy until cleanup(), so without this every page ever viewed
   // stays in memory (a scanned page with a high-res mask holds ~128 MB).
   // A cancelled render still in flight is cleaned up once it settles.
-  page.proxy.cleanup();
-  if (!page.canvas || !page.slot) return;
-  page.canvas.width = 0;
-  page.canvas.height = 0;
-  page.slot.replaceChildren();
+  page.proxy?.cleanup();
+  // A running render owns its proxy until its promise settles.
+  if (!page.rendering) page.proxy = null;
+  if (page.canvas) {
+    page.canvas.width = 0;
+    page.canvas.height = 0;
+  }
+  page.slot?.remove();
+  page.slot = null;
   page.canvas = null;
+  mountedPages.delete(page);
   pageUnloadedHook?.(page.pageNumber);
 }
 
@@ -601,15 +584,29 @@ async function renderPage(page, generation) {
   if (generation !== renderGeneration || !page.slot || page.canvas || page.rendering) return;
   page.rendering = true;
   const token = ++page.renderToken;
+  const doc = pdfDoc;
+  const targetZoom = renderedZoom;
+  let pageProxy = null;
+  let canvas = null;
   try {
-    const pageProxy = await pdfDoc.getPage(page.pageNumber);
+    pageProxy = await doc.getPage(page.pageNumber);
+    page.proxy = pageProxy;
     if (generation !== renderGeneration || token !== page.renderToken) return;
-
-    const viewport = pageProxy.getViewport({ scale: renderedZoom });
-    const outputScale = window.devicePixelRatio || 1;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width * outputScale);
-    canvas.height = Math.floor(viewport.height * outputScale);
+    const size = pageProxy.getViewport({ scale: 1 });
+    if (page.width !== size.width || page.height !== size.height) {
+      page.width = size.width;
+      page.height = size.height;
+      page.slot.style.width = `${size.width * targetZoom}px`;
+      page.slot.style.height = `${size.height * targetZoom}px`;
+      scheduleMetadataLayout();
+    }
+    const viewport = pageProxy.getViewport({ scale: targetZoom });
+    const raster = rasterSize(viewport.width, viewport.height,
+      window.devicePixelRatio || 1, canvasPixelLimit);
+    const outputScale = raster.scale;
+    canvas = document.createElement("canvas");
+    canvas.width = raster.width;
+    canvas.height = raster.height;
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
     canvas.className = "pdf-page";
@@ -637,7 +634,7 @@ async function renderPage(page, generation) {
         canvas.height = 0;
         if (page.canvas === canvas) {
           page.canvas = null;
-          page.slot.replaceChildren();
+          page.slot?.replaceChildren();
         }
         throw err;
       }
@@ -661,27 +658,74 @@ async function renderPage(page, generation) {
         slot: page.slot,
         viewport,
         pageProxy,
-        renderedZoom,
+        renderedZoom: targetZoom,
       });
     }
+  } catch (err) {
+    if (generation === renderGeneration && token === page.renderToken) {
+      page.failedGeneration = generation;
+      throw err;
+    }
   } finally {
-    if (token === page.renderToken) page.rendering = false;
+    page.rendering = false;
+    if (generation !== renderGeneration || token !== page.renderToken || !page.canvas) {
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+      pageProxy?.cleanup();
+      if (page.proxy === pageProxy) page.proxy = null;
+    }
+    // A cancelled job may now have a new slot after a zoom or fast return.
+    // Retry only that case; failed pages must not loop continuously.
+    if (pdfDoc === doc && page.slot && !page.canvas && page.failedGeneration !== renderGeneration) {
+      scheduleViewportRender();
+    }
   }
 }
 
 async function renderNearViewport(generation) {
-  const viewport = container.getBoundingClientRect();
-  const margin = Math.max(viewport.height, 1);
-  const nearby = pages.filter((page) => {
-    const rect = page.slot.getBoundingClientRect();
-    return rect.bottom >= viewport.top - margin && rect.top <= viewport.bottom + margin;
-  });
-  await Promise.all(nearby.map((page) => renderPage(page, generation)));
+  if (!pdfDoc || generation !== renderGeneration) return;
+  const scale = zoomLevel / renderedZoom;
+  const top = (-pagesWrapper.offsetTop - panY) / scale;
+  const height = container.clientHeight / scale;
+  const left = -panX / scale;
+  const width = container.clientWidth / scale;
+  const nearby = pagesInWindow(pageRows, {
+    top: top - height * 0.5, bottom: top + height * 1.5,
+    left: left - width * 0.5, right: left + width * 1.5,
+  }, renderedZoom);
+  const wanted = new Set(nearby);
+  for (const page of mountedPages) if (!wanted.has(page)) unloadPage(page);
+  const nextLimit = Math.min(MAX_PAGE_PIXELS,
+    Math.floor(CANVAS_PIXEL_BUDGET / Math.max(nearby.length, 1)));
+  canvasPixelLimit = nextLimit;
+  for (const page of nearby) {
+    // If more pages fit now (e.g. while pinching out), shrink older rasters too.
+    if (page.canvas && page.canvas.width * page.canvas.height > nextLimit) unloadPage(page);
+    if (!page.slot) {
+      pagesWrapper.appendChild(makePageSlot(page, renderedZoom, false));
+      mountedPages.add(page);
+    }
+  }
+  const center = top + height / 2;
+  nearby.sort((a, b) => Math.abs((a.layoutTop + a.layoutBottom) / 2 - center) -
+    Math.abs((b.layoutTop + b.layoutBottom) / 2 - center));
+  await renderQueue.replace(nearby.filter((page) => !page.canvas &&
+    page.failedGeneration !== generation).map((page) => ({
+    key: page,
+    run: () => renderPage(page, generation),
+  })));
+}
+
+function updatePageLayout(targetZoom) {
+  const layout = layoutPages(pages, computeColumns(targetZoom), targetZoom, getPageGap());
+  pageRows = layout.rows;
+  renderedContentWidth = layout.width;
+  renderedContentHeight = layout.height;
+  pagesWrapper.style.width = `${layout.width}px`;
+  pagesWrapper.style.height = `${layout.height}px`;
 }
 
 async function rerenderPages({ animate = false, anchor = null } = {}) {
   if (!pdfDoc) {
-    pageObserver?.disconnect();
     cancelAllPageRenders();
     pagesWrapper.replaceChildren();
     renderedContentWidth = 0;
@@ -691,38 +735,20 @@ async function rerenderPages({ animate = false, anchor = null } = {}) {
   }
 
   const generation = ++renderGeneration;
-  pageObserver?.disconnect();
   cancelAllPageRenders();
   const targetZoom = zoomLevel;
-  const columns = computeColumns(targetZoom);
-  const fragment = document.createDocumentFragment();
-
-  pagesWrapper.style.setProperty("--page-columns", String(columns));
-  pagesWrapper.style.setProperty("--page-gap", `${getPageGap()}px`);
   pagesWrapper.classList.toggle("single-page-mode", !isDualPageMode());
   pagesWrapper.classList.toggle("dual-page-mode", isDualPageMode());
-
-  for (const page of pages) fragment.appendChild(makePageSlot(page, targetZoom, animate));
-  pagesWrapper.replaceChildren(fragment);
-
-  // Cache each slot's layout box (in renderedZoom px) so current-page
-  // tracking and goToPage() work from arithmetic, not per-frame DOM reads.
-  for (const page of pages) {
-    page.layoutTop = page.slot.offsetTop;
-    page.layoutBottom = page.slot.offsetTop + page.slot.offsetHeight;
-  }
-
+  pagesWrapper.replaceChildren();
+  updatePageLayout(targetZoom);
   renderedZoom = targetZoom;
-  renderedContentWidth = pagesWrapper.scrollWidth;
-  renderedContentHeight = pagesWrapper.scrollHeight;
   if (anchor) restoreAnchor(anchor, targetZoom);
   clampPan();
   applyTransform();
   lastReportedPage = null;
   reportCurrentPage();
-  createObserver(generation);
-
   await renderNearViewport(generation);
+  if (animate) for (const page of mountedPages) page.slot?.classList.add("pdf-page-enter");
   if (generation !== renderGeneration) return;
   pendingZoomAnchor = null;
 }
@@ -735,8 +761,10 @@ export async function closePdf() {
   loadToken += 1;
   clearTimeout(zoomDebounceTimer);
   clearTimeout(resizeDebounceTimer);
-  pageObserver?.disconnect();
-  pageObserver = null;
+  cancelAnimationFrame(viewportFrame);
+  cancelAnimationFrame(layoutFrame);
+  viewportFrame = 0;
+  layoutFrame = 0;
   cancelAllPageRenders();
   pagesWrapper.replaceChildren();
   const previousLoadingTask = pdfLoadingTask;
@@ -745,6 +773,7 @@ export async function closePdf() {
   documentChangeHook?.("closed");
   lastReportedPage = null;
   pages = [];
+  pageRows = [];
   gesture = null;
   pendingZoomAnchor = null;
   renderedContentWidth = 0;
@@ -813,7 +842,7 @@ export async function renderPdf(bytes) {
   }
 
   try {
-    const loadedPages = await loadPageMetadata();
+    const loadedPages = await loadPageMetadata(pdfDoc);
     if (token !== loadToken) {
       await releaseSupersededLoad(loadingTask);
       return;
@@ -832,7 +861,6 @@ export async function renderPdf(bytes) {
       await releaseSupersededLoad(loadingTask);
       return;
     }
-    pageObserver?.disconnect();
     cancelAllPageRenders();
     renderGeneration += 1;
     const failedLoadingTask = pdfLoadingTask;

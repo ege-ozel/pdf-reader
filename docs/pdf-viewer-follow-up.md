@@ -2,11 +2,18 @@
 
 ## Implemented
 
-- PDF.js page dimensions are read in bounded batches before layout. Each page
-  keeps a fixed-size slot, so rendering and unloading canvases does not change
-  document geometry or pan bounds.
-- `IntersectionObserver` renders pages in the viewer and a one-viewport
-  buffer. Canvases outside that buffer are released; their slots remain.
+- Opening reads only the first page dimensions. Other page proxies and their
+  metadata load when a page enters the visible window; estimated positions for
+  mixed-size pages are corrected while preserving the focal point.
+- A binary-searched lightweight row layout reserves pan bounds without adding
+  DOM slots for the whole document. A small viewport window mounts, renders,
+  and retains nearby slots; navigation removes distant slots and canvases.
+- The priority render queue limits concurrent work to two desktop pages and
+  one mobile page. Device-specific budgets limit total canvas memory and each
+  page's raster pixel count; zoom and navigation cancel stale queued work.
+- PDF pages, rasters, and old document loading tasks are cleaned up on unload,
+  zoom, superseding opens, and close. Existing page hooks release annotation
+  and text-layer references alongside the canvas.
 - Zoom continues to use an immediate CSS transform followed by a debounced
   crisp render. The page under the zoom anchor is retained when the grid
   reflows, and only nearby pages need new canvases.

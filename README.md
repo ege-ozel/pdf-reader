@@ -22,9 +22,13 @@ npm run tauri dev
 
 ## PDF viewer
 
-PDF.js page dimensions are collected up front to reserve stable layout slots.
-Canvas rendering is lazy: visible pages and pages within one viewport are
-rendered, while distant canvases are released without changing the page slots.
+Opening a PDF reads the first page size immediately and fetches other page
+metadata only when needed. Lightweight layout records reserve stable document
+positions; only pages in the visible window and a small nearby buffer get DOM
+slots and canvases. Distant page proxies and canvas pixel buffers are released
+on navigation. Render concurrency and total canvas memory are capped, and a
+scanned page's canvas resolution is limited at large zoom levels. Documents
+with mixed page sizes refine nearby layout positions as they are visited.
 Single-page mode uses one column; dual-page mode uses two columns at normal
 zoom and adds gallery columns when more pages fit at lower zoom levels.
 Desktop and mobile page spacing is 16px and 12px, respectively.
