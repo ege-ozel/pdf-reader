@@ -125,6 +125,10 @@ function cancelPageRender(page) {
     page.renderTask.cancel();
     page.renderTask = null;
   }
+  if (page.textLayer) {
+    page.textLayer.cancel();
+    page.textLayer = null;
+  }
 }
 
 function cancelAllPageRenders() {
@@ -580,6 +584,34 @@ function unloadPage(page) {
   pageUnloadedHook?.(page.pageNumber);
 }
 
+// Transparent, selectable text over the canvas so long-press (touch) and
+// drag (mouse) can select and copy PDF text. Failure here must never break
+// the page itself, so errors are swallowed.
+async function mountTextLayer(page, pageProxy, viewport, zoom, generation, token) {
+  const layer = document.createElement("div");
+  layer.className = "text-layer";
+  layer.style.setProperty("--total-scale-factor", String(zoom));
+  layer.style.setProperty("--scale-round-x", "1px");
+  layer.style.setProperty("--scale-round-y", "1px");
+  let textLayer = null;
+  try {
+    textLayer = new pdfjsLib.TextLayer({
+      textContentSource: pageProxy.streamTextContent(),
+      container: layer,
+      viewport,
+    });
+    page.textLayer = textLayer;
+    await textLayer.render();
+  } catch {
+    return;
+  } finally {
+    if (textLayer && page.textLayer === textLayer) page.textLayer = null;
+  }
+  if (generation === renderGeneration && token === page.renderToken && page.slot) {
+    page.slot.append(layer);
+  }
+}
+
 async function renderPage(page, generation) {
   if (generation !== renderGeneration || !page.slot || page.canvas || page.rendering) return;
   page.rendering = true;
@@ -648,6 +680,10 @@ async function renderPage(page, generation) {
           page.slot?.replaceChildren();
         }
       }
+    }
+
+    if (generation === renderGeneration && token === page.renderToken && page.canvas === canvas) {
+      await mountTextLayer(page, pageProxy, viewport, targetZoom, generation, token);
     }
 
     if (generation === renderGeneration && token === page.renderToken && page.canvas === canvas) {

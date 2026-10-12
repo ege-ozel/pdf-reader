@@ -590,6 +590,59 @@ body.drag-active #empty-state #empty-state-text {
   background: white;
 }
 
+/* PDF.js text layer: invisible spans positioned over the canvas, so the
+   browser's native selection (long-press on touch) can select and copy. */
+.text-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.text-layer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.text-layer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.text-layer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.text-layer > :not(.markedContent),
+.text-layer .markedContent span:not(.markedContent) {
+  font-size: calc(var(--total-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1));
+}
+
+.text-layer .markedContent {
+  display: contents;
+}
+
+.text-layer br::selection {
+  background: transparent;
+}
+
+.text-layer ::selection {
+  background: rgba(224, 160, 82, 0.35);
+}
+
 /* plays once, only when a document is first opened — never on zoom
    re-renders, which recreate every canvas and would otherwise replay
    this on every wheel tick */
@@ -635,8 +688,38 @@ body.drag-active #empty-state #empty-state-text {
     color: #4a443c;
   }
 
-  #toolbar .icon-btn:hover,
+  /* touch devices keep :hover stuck on the last-tapped button, so only
+     :active gives press feedback here */
+  #toolbar .icon-btn:hover {
+    background: transparent;
+    color: #4a443c;
+  }
+
   #toolbar .icon-btn:active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* segmented single / side-by-side control, tuned for the paper toolbar */
+  #toolbar .toolbar-seg {
+    background: rgba(32, 29, 26, 0.08);
+  }
+
+  #toolbar .seg-btn[aria-pressed="true"],
+  #toolbar .seg-btn[aria-pressed="true"]:hover,
+  #toolbar .seg-btn[aria-pressed="true"]:active {
+    background: #fffdf8;
+    color: var(--accent);
+    box-shadow: 0 1px 2px rgba(32, 29, 26, 0.22);
+  }
+
+  #toolbar .seg-btn[aria-pressed="false"]:active {
+    background: rgba(32, 29, 26, 0.1);
+    color: #201d1a;
+  }
+
+  #toolbar #fit-page-btn[aria-pressed="true"],
+  #toolbar #fit-page-btn[aria-pressed="true"]:hover {
     background: var(--accent-soft);
     color: var(--accent);
   }
