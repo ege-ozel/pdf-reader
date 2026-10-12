@@ -11,6 +11,21 @@ export function computeFitZoom(availableWidth, pageWidth, gap, dualPageMode) {
   return (availableWidth - gap * (columns - 1)) / (pageWidth * columns);
 }
 
+// Largest backing store a page canvas may use (about 64 MB of RGBA). Without
+// a cap, a letter page at 4x zoom on a 3x display is ~280 MB per canvas, and
+// several visible pages at once exhaust memory on phones and large screens.
+export const MAX_CANVAS_PIXELS = 16_000_000;
+
+// Device-pixel scale for a page canvas: the display's ratio, lowered when the
+// canvas would exceed maxPixels. The CSS size is unchanged, so layout does not
+// move; only sharpness drops, and only at extreme zoom on high-DPI screens.
+export function computeOutputScale(cssWidth, cssHeight, devicePixelRatio, maxPixels = MAX_CANVAS_PIXELS) {
+  const ratio = devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const cssArea = cssWidth * cssHeight;
+  if (!(cssArea > 0)) return ratio;
+  return Math.min(ratio, Math.sqrt(maxPixels / cssArea));
+}
+
 export function resolveDualPageMode(viewportWidth, pageCount, preference = null) {
   if (pageCount <= 1 || preference === "single") return false;
   if (preference === "dual") return true;

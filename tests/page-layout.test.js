@@ -1,11 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_CANVAS_PIXELS,
   computeFitPageZoom,
   computeFitZoom,
+  computeOutputScale,
   computePageColumns,
   currentPageFromPositions,
   resolveDualPageMode,
 } from "../src/page-layout.js";
+
+describe("computeOutputScale", () => {
+  it("keeps the display ratio when the canvas fits the budget", () => {
+    expect(computeOutputScale(800, 1000, 2)).toBe(2);
+  });
+
+  it("lowers the scale so the backing store stays within the budget", () => {
+    // a letter page at 4x zoom: 2448 x 3168 CSS px on a 3x display
+    const scale = computeOutputScale(2448, 3168, 3);
+    expect(scale).toBeLessThan(3);
+    expect(scale).toBeGreaterThan(1);
+    expect(2448 * scale * (3168 * scale)).toBeLessThanOrEqual(MAX_CANVAS_PIXELS + 1);
+  });
+
+  it("falls back to 1 for a missing or invalid display ratio", () => {
+    expect(computeOutputScale(800, 1000, 0)).toBe(1);
+    expect(computeOutputScale(800, 1000, undefined)).toBe(1);
+  });
+
+  it("returns the display ratio for an empty canvas size", () => {
+    expect(computeOutputScale(0, 0, 2)).toBe(2);
+  });
+});
 
 describe("computePageColumns", () => {
   it("always keeps a dual-page pair, even when it must overflow", () => {

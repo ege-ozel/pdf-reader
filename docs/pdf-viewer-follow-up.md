@@ -22,6 +22,11 @@
   The grid never creates columns beyond the document's page count.
 - The viewer centers content that fits and clamps pan for content that
   overflows. Its flex parent can shrink alongside the desktop sidebar.
+- Page canvases are capped at `MAX_CANVAS_PIXELS` (16 M backing-store pixels,
+  about 64 MB). `computeOutputScale` lowers the device-pixel scale only when a
+  canvas would exceed the cap. Before this, a letter page at 4x zoom on a 3x
+  display allocated about 280 MB per canvas, and several visible pages at once
+  could exhaust memory on large or high-DPI screens.
 - Android recent-file names now come from Tauri's `PathResolver::file_name`,
   which reads the SAF display-name metadata for `content://` URIs. Names are
   no longer guessed from encoded URI segments. Desktop paths continue to use
@@ -35,6 +40,24 @@
 - `cargo test` (from `src-tauri/`): 12 tests passed.
 - JavaScript syntax checks, changed Rust file formatting check, and
   `git diff --check` passed.
+
+## Large-document stability: what remains
+
+Lazy loading and page-cache release already exist: `IntersectionObserver`
+renders pages near the viewport, and `unloadPage` zeroes the canvas and calls
+`PDFPageProxy.cleanup()`, so nothing is cached beyond the visible buffer. The
+remaining risks, in likely order of impact:
+
+1. Canvas memory at high zoom and DPR (addressed above).
+2. Whole-file copies. Rust reads the file into a `Vec`, the IPC response copies
+   it into a JS `ArrayBuffer`, and PDF.js may copy it again into its worker.
+   A 40 MB file can peak at roughly 120 MB before parsing starts. Not changed
+   yet; measure on a device before restructuring.
+3. Decoded images. Scanned pages can hold large decoded images on the PDF.js
+   page proxy until cleanup. Check whether pdfjs-dist 6 exposes a
+   `maxImageSize` option before relying on it.
+4. Word documents are rendered in one pass with no virtualization. Very large
+   `.docx` files are a separate risk; see the Word section of the README.
 
 ## Manual verification still required
 
