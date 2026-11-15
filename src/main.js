@@ -375,9 +375,24 @@ initSidebar();
 initEmptyState();
 showEmptyState();
 
-invoke("get_launch_path").then((path) => {
-  if (path) handleOpenRequested({ path });
-});
+// Documents handed over by Android "Open with" (or a Windows launch argument).
+// The listener is registered before the pending path is taken, so a request
+// that arrives during startup is picked up by one of the two.
+const { listen } = window.__TAURI__.event;
+listen("external-open", (event) => {
+  if (event.payload) handleOpenRequested({ path: event.payload });
+})
+  .catch(() => {
+    // Without the listener, a document handed over while running is not
+    // shown; the startup check below still covers a cold start.
+  })
+  .then(() => invoke("get_launch_path"))
+  .then((path) => {
+    if (path) handleOpenRequested({ path });
+  })
+  .catch(() => {
+    // no launch document; the empty state stays up
+  });
 
 getCurrentWebview().onDragDropEvent((event) => {
   const type = event.payload.type;

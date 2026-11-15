@@ -2,11 +2,52 @@ use crate::recent_files::{self, RecentEntry};
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
-use tauri::Manager;
+use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
 
 /// File extensions the app can open (lowercase, no dot).
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["pdf", "docx"];
+
+/// Event sent to the window when another app hands it a document while it is
+/// already running. The payload is the path or URI string.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "ios", target_os = "android")),
+    allow(dead_code)
+)]
+pub const EXTERNAL_OPEN_EVENT: &str = "external-open";
+
+/// A document handed over from outside the app ("Open with") that the
+/// frontend has not taken yet. It covers the cold start, where the event can
+/// fire before the window is listening.
+#[derive(Default)]
+pub struct PendingOpen(pub Mutex<Option<String>>);
+
+/// The first non-blank path in an external open request.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "ios", target_os = "android")),
+    allow(dead_code)
+)]
+pub fn first_opened_path(paths: &[String]) -> Option<String> {
+    paths.iter().find(|path| !path.trim().is_empty()).cloned()
+}
+
+/// Remembers an external open request for the frontend and tells a running
+/// window about it.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "ios", target_os = "android")),
+    allow(dead_code)
+)]
+pub fn handle_external_open(app: &tauri::AppHandle, paths: &[String]) {
+    let Some(path) = first_opened_path(paths) else {
+        return;
+    };
+    let pending = app.state::<PendingOpen>();
+    if let Ok(mut slot) = pending.0.lock() {
+        *slot = Some(path.clone());
+    }
+    let _ = app.emit(EXTERNAL_OPEN_EVENT, path);
+}
 
 /// True when `path` ends in one of `SUPPORTED_EXTENSIONS`, ignoring case.
 pub fn is_supported_document(path: &str) -> bool {
@@ -98,14 +139,23 @@ pub async fn open_document_path(
     open_filepath_and_record(&app, file_path)
 }
 
-/// Returns the document path passed on the command line, if any — this is
-/// how Windows launches the app for "Open with" / file-association
-/// double-click.
+/// Returns the document this launch should open, if any: a document handed
+/// over by the OS and not yet taken (Android "Open with"), else the document
+/// path passed on the command line (Windows "Open with" / file-association
+/// double-click).
 #[tauri::command]
-pub fn get_launch_path() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find(|arg| is_supported_document(arg))
+pub fn get_launch_path(app: tauri::AppHandle) -> Option<String> {
+    let pending = app
+        .state::<PendingOpen>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    pending.or_else(|| {
+        std::env::args()
+            .skip(1)
+            .find(|arg| is_supported_document(arg))
+    })
 }
 
 #[tauri::command]
@@ -163,6 +213,20 @@ mod tests {
         assert!(is_supported_document("C:\\Docs\\Report.PDF"));
         assert!(is_supported_document("/home/me/notes.docx"));
         assert!(is_supported_document("Notes.DocX"));
+    }
+
+    #[test]
+    fn picks_first_non_blank_external_path() {
+        let paths = vec![
+            "  ".to_string(),
+            "content://media/document/1".to_string(),
+            "content://media/document/2".to_string(),
+        ];
+        assert_eq!(
+            first_opened_path(&paths).as_deref(),
+            Some("content://media/document/1")
+        );
+        assert_eq!(first_opened_path(&[]), None);
     }
 
     #[test]

@@ -72,6 +72,7 @@ To update the vendored Word libraries:
 - [ ] 2-page, 3–5-page, 10+-page, and long documents
 - [ ] Slow and fast scrolling while pages load and unload
 - [ ] Rotate the device and resize the viewport in both page modes
+- [ ] "Open with" from a file manager (app closed, and app already open) shows the PDF or `.docx`, not a blank screen
 
 ### Laptop / desktop
 
