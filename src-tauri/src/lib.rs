@@ -12,6 +12,7 @@ pub fn run() {
             commands::open_document_file,
             commands::open_document_path,
             commands::get_launch_path,
+            commands::take_pending_open,
             commands::get_recent_files,
             commands::toggle_pin,
             commands::remove_recent_entry,

@@ -376,20 +376,22 @@ initEmptyState();
 showEmptyState();
 
 // Documents handed over by Android "Open with" (or a Windows launch argument).
-// The listener is registered before the pending path is taken, so a request
-// that arrives during startup is picked up by one of the two.
+// Rust keeps the handed-over path until it is taken, and the event only says
+// "take it": whichever of the two runs first opens it, the other gets null, so
+// a document is opened once and never again after a page reload.
 const { listen } = window.__TAURI__.event;
-listen("external-open", (event) => {
-  if (event.payload) handleOpenRequested({ path: event.payload });
+function openTakenPath(path) {
+  if (path) handleOpenRequested({ path });
+}
+listen("external-open", () => {
+  invoke("take_pending_open").then(openTakenPath).catch(() => {});
 })
   .catch(() => {
     // Without the listener, a document handed over while running is not
     // shown; the startup check below still covers a cold start.
   })
   .then(() => invoke("get_launch_path"))
-  .then((path) => {
-    if (path) handleOpenRequested({ path });
-  })
+  .then(openTakenPath)
   .catch(() => {
     // no launch document; the empty state stays up
   });

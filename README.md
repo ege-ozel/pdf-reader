@@ -19,6 +19,17 @@ npm run tauri dev
 
 - `npm test` — frontend unit tests (zoom, page layout, document-type detection) via Vitest.
 - `cargo test` (from `src-tauri/`) — Rust unit tests for file reading.
+- `npm run test:e2e` — desktop end-to-end tests (`tests/e2e/`). They build a
+  debug app and drive the real window through
+  [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/): open a PDF
+  and a `.docx` from the command line, page through and zoom, reopen and pin
+  from the sidebar, and check the errors for corrupt, missing and legacy
+  `.doc` files. Add `-- --no-build` to reuse the last debug build. Needs
+  `cargo install tauri-driver --locked` plus the native driver:
+  `webkit2gtk-driver` (and `xvfb` without a display) on Linux, or
+  [msedgedriver](https://developer.microsoft.com/microsoft-edge/tools/webdriver/)
+  matching the installed WebView2 on Windows. Your recent-files list is moved
+  aside during the run and put back afterwards.
 
 ## PDF viewer
 

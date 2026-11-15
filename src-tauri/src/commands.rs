@@ -33,7 +33,7 @@ pub fn first_opened_path(paths: &[String]) -> Option<String> {
 }
 
 /// Remembers an external open request for the frontend and tells a running
-/// window about it.
+/// window to take it (see `take_pending_open`).
 #[cfg_attr(
     not(any(target_os = "macos", target_os = "ios", target_os = "android")),
     allow(dead_code)
@@ -139,23 +139,35 @@ pub async fn open_document_path(
     open_filepath_and_record(&app, file_path)
 }
 
+/// Takes the document another app handed over ("Open with") and that the
+/// window has not opened yet, so each hand-over is opened exactly once.
+pub fn take_pending(app: &tauri::AppHandle) -> Option<String> {
+    app.state::<PendingOpen>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
+}
+
 /// Returns the document this launch should open, if any: a document handed
 /// over by the OS and not yet taken (Android "Open with"), else the document
 /// path passed on the command line (Windows "Open with" / file-association
 /// double-click).
 #[tauri::command]
 pub fn get_launch_path(app: tauri::AppHandle) -> Option<String> {
-    let pending = app
-        .state::<PendingOpen>()
-        .0
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.take());
-    pending.or_else(|| {
+    take_pending(&app).or_else(|| {
         std::env::args()
             .skip(1)
             .find(|arg| is_supported_document(arg))
     })
+}
+
+/// Called by the window when `EXTERNAL_OPEN_EVENT` arrives. Taking the path
+/// here (rather than using the event payload) clears it, so a later page
+/// reload does not open the same document again.
+#[tauri::command]
+pub fn take_pending_open(app: tauri::AppHandle) -> Option<String> {
+    take_pending(&app)
 }
 
 #[tauri::command]
