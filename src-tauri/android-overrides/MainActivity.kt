@@ -4,7 +4,11 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.content.ContentValues
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.File
 import android.provider.OpenableColumns
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -62,6 +66,35 @@ class MainActivity : TauriActivity() {
     return doc
   }
 
+  /**
+   * "Save as copy" on Android: copies a staged file (written by the Rust side
+   * into the app cache) into the public Downloads folder through MediaStore,
+   * which needs no storage permission. Returns the saved file name, or null.
+   */
+  @JavascriptInterface
+  fun saveToDownloads(stagedPath: String, displayName: String): String? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+    return try {
+      val values = ContentValues().apply {
+        put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+        put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+      }
+      val target = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: return null
+      File(stagedPath).inputStream().use { input ->
+        contentResolver.openOutputStream(target)?.use { output -> input.copyTo(output) }
+          ?: return null
+      }
+      File(stagedPath).delete()
+      // The system may rename on a clash; report the final name.
+      contentResolver.query(target, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)
+        ?.use { if (it.moveToFirst()) it.getString(0) else displayName } ?: displayName
+    } catch (_: Exception) {
+      null
+    }
+  }
+
   /** Reading mode: hide (or restore) the status bar; the nav bar is always hidden. */
   @JavascriptInterface
   fun setReadingMode(on: Boolean) {
@@ -94,9 +127,16 @@ class MainActivity : TauriActivity() {
     val uri = documentUri(intent) ?: return false
     if (uri.scheme != "content" && uri.scheme != "file") return false
     // Best effort: only providers that offer persistable grants allow this.
+    // Ask for write access too (it lets "Overwrite original" work); fall back
+    // to read-only when the provider does not offer it.
     try {
-      contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      contentResolver.takePersistableUriPermission(
+        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
     } catch (_: Exception) {
+      try {
+        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      } catch (_: Exception) {
+      }
     }
     var name: String? = null
     try {

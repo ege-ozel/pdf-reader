@@ -89,6 +89,12 @@
           <path d="M15 21v-6h6" />
         </svg>
       </button>
+      <button id="markup-btn" class="icon-btn" title="Mark up" aria-label="Mark up this PDF" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 20l4-1 11-11a2.1 2.1 0 0 0-3-3L5 16z" />
+          <path d="M14 7l3 3" />
+        </svg>
+      </button>
       <div id="page-nav" class="toolbar-nav-wrap" hidden>
         <button id="page-nav-btn" class="icon-btn page-nav-btn" title="Go to page" aria-label="Go to page" aria-haspopup="dialog" aria-expanded="false">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -188,6 +194,71 @@
         </div>
         <div id="viewer-container" hidden><div id="pdf-pages"></div></div>
         <div id="docx-container" hidden><div id="docx-pages"></div></div>
+      </div>
+    </div>
+    <!-- Mark-up tools (PDF only). Floating: under the toolbar on wide
+         screens, at the bottom on phones so thumbs reach it. -->
+    <div id="markup-bar" hidden>
+      <div class="markup-row" role="toolbar" aria-label="Mark-up tools">
+        <button class="icon-btn" data-tool="highlight" title="Highlight text (select it)" aria-label="Highlight text" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 4l5 5-8 8H7v-5z" />
+            <path d="M7 17l-3 3h6" />
+          </svg>
+        </button>
+        <button class="icon-btn" data-tool="ink" title="Draw" aria-label="Draw" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 17c3-6 5-6 6-3s3 3 6-3 4-2 6 0" />
+          </svg>
+        </button>
+        <button class="icon-btn" data-tool="note" title="Add a note (tap a note to open it)" aria-label="Add a text note" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 4h14v12H9l-4 4z" />
+            <path d="M9 9h6M9 12h4" />
+          </svg>
+        </button>
+        <button class="icon-btn" data-tool="eraser" title="Erase marks" aria-label="Erase marks" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 20h12" />
+            <path d="M4.5 14.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 18H8z" />
+            <path d="M9 10l5 5" />
+          </svg>
+        </button>
+        <span class="markup-sep" aria-hidden="true"></span>
+        <button id="markup-color-btn" class="icon-btn" title="Colour" aria-label="Choose colour" aria-haspopup="menu" aria-expanded="false">
+          <span class="markup-color-dot" aria-hidden="true"></span>
+        </button>
+        <span class="markup-sep" aria-hidden="true"></span>
+        <button id="markup-undo-btn" class="icon-btn" title="Undo" aria-label="Undo" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 14L4 9l5-5" />
+            <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+          </svg>
+        </button>
+        <button id="markup-redo-btn" class="icon-btn" title="Redo" aria-label="Redo" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 14l5-5-5-5" />
+            <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+          </svg>
+        </button>
+        <button id="markup-save-btn" class="icon-btn" title="Save marks" aria-label="Save marks" aria-haspopup="menu" aria-expanded="false" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 4h11l3 3v13H5z" />
+            <path d="M8 4v5h7V4" />
+            <path d="M8 20v-6h8v6" />
+          </svg>
+        </button>
+      </div>
+      <div id="markup-color-menu" class="markup-menu" role="menu" aria-label="Colour" hidden>
+        <button class="markup-swatch" data-color="#ffd43b" style="--swatch: #ffd43b" role="menuitemradio" aria-label="Yellow" aria-pressed="true"></button>
+        <button class="markup-swatch" data-color="#69db7c" style="--swatch: #69db7c" role="menuitemradio" aria-label="Green" aria-pressed="false"></button>
+        <button class="markup-swatch" data-color="#4dabf7" style="--swatch: #4dabf7" role="menuitemradio" aria-label="Blue" aria-pressed="false"></button>
+        <button class="markup-swatch" data-color="#ff6b6b" style="--swatch: #ff6b6b" role="menuitemradio" aria-label="Red" aria-pressed="false"></button>
+        <button class="markup-swatch" data-color="#212529" style="--swatch: #212529" role="menuitemradio" aria-label="Black" aria-pressed="false"></button>
+      </div>
+      <div id="markup-save-menu" class="markup-menu" role="menu" aria-label="Save marks" hidden>
+        <button type="button" data-save-mode="copy" role="menuitem">Save as copy</button>
+        <button type="button" data-save-mode="overwrite" role="menuitem">Overwrite original</button>
       </div>
     </div>
   </body>

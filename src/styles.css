@@ -1007,6 +1007,288 @@ body.drag-active #empty-state #empty-state-text {
   padding: 4px 6px;
 }
 
+/* ---------- mark-up bar ---------- */
+
+#markup-btn[hidden],
+#markup-bar[hidden],
+.markup-menu[hidden] {
+  display: none;
+}
+
+#markup-btn[aria-pressed="true"],
+#markup-btn[aria-pressed="true"]:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+/* Floats over the page (it is not in the layout flow, so opening it never
+   shifts or re-renders the document). Under the toolbar on wide screens;
+   z-index stays below the toolbar popovers (40), the phone error banner (50)
+   and the full-screen toolbar overlay (60). */
+#markup-bar {
+  position: fixed;
+  z-index: 35;
+  left: 50%;
+  top: calc(var(--toolbar-content-h) + env(safe-area-inset-top, 0px) + 10px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  color: var(--text-hi);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.markup-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* a safety net on very narrow phones; the menus live outside this row so
+     the scroll container never clips them */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.markup-row .icon-btn {
+  flex: none;
+}
+
+.markup-row .icon-btn[aria-pressed="true"],
+.markup-row .icon-btn[aria-pressed="true"]:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.markup-row .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.markup-row .icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-lo);
+}
+
+.markup-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--border-idle);
+}
+
+.markup-color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--markup-color, #ffd43b);
+  box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3px var(--border-idle);
+}
+
+/* a small dot on Save while some marks are not written to a file yet */
+#markup-save-btn {
+  position: relative;
+}
+
+#markup-save-btn.has-unsaved::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.markup-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-sidebar);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+}
+
+#markup-color-menu {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  gap: 6px;
+}
+
+#markup-save-menu {
+  flex-direction: column;
+  min-width: 190px;
+}
+
+#markup-save-menu button {
+  padding: 10px 12px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--text-hi);
+  white-space: nowrap;
+}
+
+#markup-save-menu button:hover,
+#markup-save-menu button:active {
+  background: var(--surface-hover);
+}
+
+.markup-swatch {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.markup-swatch[aria-pressed="true"] {
+  border-color: var(--text-hi);
+}
+
+/* desktop full screen: the toolbar is an overlay that slides in at the top,
+   so the bar sits at the top edge and steps down while the toolbar shows */
+body.is-fullscreen #markup-bar {
+  top: 12px;
+  transition: top 0.2s ease;
+}
+
+body.is-fullscreen.controls-visible #markup-bar {
+  top: calc(var(--toolbar-content-h) + env(safe-area-inset-top, 0px) + 10px);
+}
+
+@media (pointer: coarse) {
+  /* touch keeps :hover on the last-tapped button; only pressed state shows */
+  .markup-row .icon-btn:hover {
+    background: transparent;
+    color: var(--text-lo);
+  }
+
+  .markup-swatch {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* Phones: bottom-anchored for thumbs, clear of the reading-mode page bar */
+@media (max-width: 640px) {
+  #markup-bar,
+  body.is-fullscreen #markup-bar,
+  body.is-fullscreen.controls-visible #markup-bar {
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* the page bar (#fs-page-bar: 18px from the bottom, 44px tall) shows in
+     reading mode together with the controls; sit just above it then */
+  body.is-fullscreen.pdf-active.controls-visible #markup-bar {
+    bottom: calc(18px + 44px + 10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .markup-row .icon-btn {
+    width: 36px;
+    height: 40px;
+  }
+
+  .markup-sep {
+    margin: 0 1px;
+  }
+
+  /* open upwards from a bottom bar */
+  .markup-menu {
+    top: auto;
+    bottom: calc(100% + 8px);
+  }
+}
+
+/* small modal for note text, unsaved marks and overwrite confirmation */
+.markup-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.markup-dialog {
+  width: min(380px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  color: var(--text-hi);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+}
+
+.markup-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.markup-dialog p {
+  margin: 0 0 12px;
+  color: var(--text-lo);
+}
+
+.markup-dialog textarea {
+  display: block;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid var(--border-idle);
+  border-radius: 8px;
+  background: var(--bg-app);
+  color: var(--text-hi);
+  font: 15px/1.4 system-ui, sans-serif;
+  resize: vertical;
+}
+
+.markup-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.markup-dialog-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  color: var(--text-hi);
+}
+
+.markup-dialog-actions button:hover,
+.markup-dialog-actions button:active {
+  background: var(--surface-hover);
+}
+
+.markup-dialog-actions .markup-dialog-primary {
+  background: var(--accent);
+  color: #201d1a;
+  font-weight: 600;
+}
+
+.markup-dialog-actions .markup-dialog-primary:hover,
+.markup-dialog-actions .markup-dialog-primary:active {
+  background: var(--accent-strong);
+  color: #201d1a;
+}
+
+.markup-dialog-actions .markup-dialog-danger {
+  color: var(--danger);
+}
+
 /* ---------- middle-click autoscroll ---------- */
 
 #viewer-container.autoscrolling,
