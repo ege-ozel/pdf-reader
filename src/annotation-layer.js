@@ -43,7 +43,11 @@ function renderMark(mark) {
   return null;
 }
 
-export function createAnnotationLayerController({ store, onStatus = () => {} }) {
+// `editNoteText({ text })` (optional) asks the user for a note's text and
+// resolves to the new text, or null to cancel. The app passes a fixed-position
+// editor: an inline textarea inside the page slot would be destroyed when the
+// Android soft keyboard resizes the window (the viewer re-renders every slot).
+export function createAnnotationLayerController({ store, onStatus = () => {}, editNoteText = null }) {
   const pagesInfo = new Map(); // pageNumber -> { width, height, slot, svg, surface, preview }
   let tool = null;
   let color = "#ffeb3b";
@@ -81,12 +85,10 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
     let poisoned = false; // multi-touch seen: no mark until every pointer is released
     let stroke = null; // { points }
     let notePoint = null; // note tool: placed on release, not on press
-    let moveHandler = null; // set by tool-specific logic (Task 6 adds highlight)
 
     const cancel = () => {
       stroke = null;
       notePoint = null;
-      moveHandler = null;
       if (info.preview) { info.preview.remove(); info.preview = null; }
     };
 
@@ -113,9 +115,9 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
         eraseAt(pageNumber, point);
         stroke = { points: [point] };
         surface.setPointerCapture?.(event.pointerId);
-      } else if (tool === "highlight") {
-        info.beginHighlight?.(event, point, (fn) => { moveHandler = fn; });
       }
+      // Highlight never reaches here: its surface lets input through to the
+      // text layer, and the selection is turned into a mark by annotation-ui.
     });
 
     surface.addEventListener("pointermove", (event) => {
@@ -126,8 +128,6 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
         info.preview.setAttribute("d", pathData(stroke.points));
       } else if (tool === "eraser" && stroke) {
         eraseAt(pageNumber, point);
-      } else if (moveHandler) {
-        moveHandler(event, point);
       }
     });
 
@@ -140,8 +140,6 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
           store.add({ type: "ink", page: pageNumber, color, width: INK_WIDTH, points });
         } else if (ok && tool === "note" && notePoint) {
           placeNote(info, pageNumber, notePoint);
-        } else if (ok && moveHandler) {
-          info.endHighlight?.();
         }
         poisoned = false;
       }
@@ -157,6 +155,10 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
   }
 
   function placeNote(info, pageNumber, point) {
+    if (editNoteText) {
+      editNoteAt(pageNumber, point);
+      return;
+    }
     const input = document.createElement("textarea");
     input.className = "annot-note-input";
     input.placeholder = "Note";
@@ -182,11 +184,35 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
     });
   }
 
+  // Tapping an existing note with the note tool opens it (the only way to
+  // read a note on touch, where the SVG <title> tooltip never shows);
+  // tapping elsewhere adds a new one. Editing is a remove plus an add, so it
+  // takes two undo steps.
+  async function editNoteAt(pageNumber, point) {
+    const existing = [...store.marksOnPage(pageNumber)].reverse()
+      .find((m) => m.type === "note" && hitTestMark(m, point.x, point.y, 0));
+    const noteColor = existing?.color ?? color;
+    const result = await editNoteText({ text: existing?.text ?? "" });
+    if (result == null) return;
+    const text = result.trim();
+    if (existing) {
+      if (text === existing.text) return;
+      store.remove(existing.id);
+      if (!text) return;
+    }
+    if (text) {
+      const at = existing ?? point;
+      store.add({ type: "note", page: pageNumber, color: noteColor, x: at.x, y: at.y, text });
+    }
+  }
+
   function syncSurfaces() {
     for (const n of [...pagesInfo.keys()]) {
       const info = liveInfo(n);
       if (!info) continue;
-      info.surface.style.pointerEvents = tool ? "auto" : "none";
+      // Highlight works on a native text selection, so its surface must let
+      // presses through to the PDF.js text layer underneath.
+      info.surface.style.pointerEvents = tool && tool !== "highlight" ? "auto" : "none";
       info.surface.dataset.tool = tool ?? "";
     }
   }
@@ -202,7 +228,7 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
       attachInput(info, pageNumber);
       drawPage(pageNumber);
       syncSurfaces();
-      controller.onPageReady?.(info, pageNumber); // Task 6 hook: text layer
+      controller.onPageReady?.(info, pageNumber); // optional hook for the app
     },
     handlePageUnloaded(pageNumber) {
       pagesInfo.delete(pageNumber);
@@ -210,7 +236,7 @@ export function createAnnotationLayerController({ store, onStatus = () => {} }) 
     setTool(next) {
       tool = next;
       syncSurfaces();
-      controller.onToolChanged?.(next); // Task 6 hook
+      controller.onToolChanged?.(next); // optional hook for the app
     },
     getTool: () => tool,
     setColor(hex) { color = hex; },

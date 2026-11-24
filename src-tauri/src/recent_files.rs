@@ -8,6 +8,10 @@ pub struct RecentEntry {
     pub name: String,
     pub opened_at: u64,
     pub pinned: bool,
+    /// For documents we keep a private copy of (Android content:// grants),
+    /// the URI the user originally opened. "Overwrite original" targets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 pub fn upsert_and_trim(
@@ -23,6 +27,11 @@ pub fn upsert_and_trim(
         .map(|e| e.pinned)
         .unwrap_or(false);
 
+    let existing_origin = entries
+        .iter()
+        .find(|e| e.path == path)
+        .and_then(|e| e.origin.clone());
+
     let mut without_target: Vec<RecentEntry> =
         entries.into_iter().filter(|e| e.path != path).collect();
 
@@ -31,6 +40,7 @@ pub fn upsert_and_trim(
         name: name.to_string(),
         opened_at,
         pinned: existing_pinned,
+        origin: existing_origin,
     });
 
     let (mut pinned, mut unpinned): (Vec<_>, Vec<_>) =
@@ -56,6 +66,19 @@ pub fn toggle_pin(entries: Vec<RecentEntry>, path: &str) -> Vec<RecentEntry> {
         .map(|mut e| {
             if e.path == path {
                 e.pinned = !e.pinned;
+            }
+            e
+        })
+        .collect()
+}
+
+/// Remembers the original URI behind a private copy.
+pub fn set_origin(entries: Vec<RecentEntry>, path: &str, origin: &str) -> Vec<RecentEntry> {
+    entries
+        .into_iter()
+        .map(|mut e| {
+            if e.path == path {
+                e.origin = Some(origin.to_string());
             }
             e
         })
@@ -114,6 +137,7 @@ mod tests {
 
     fn entry(path: &str, opened_at: u64, pinned: bool) -> RecentEntry {
         RecentEntry {
+            origin: None,
             path: path.to_string(),
             name: path.to_string(),
             opened_at,

@@ -29,6 +29,8 @@ import { initSidebar } from "./sidebar.js";
 import { initEmptyState } from "./empty-state.js";
 import { getBackStack } from "./back-stack.js";
 import { reportOpenFailure } from "./open-errors.js";
+import { initAnnotationUi } from "./annotation-ui.js";
+import { pickDisplayName } from "./annotation-save.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebview } = window.__TAURI__.webview;
@@ -71,6 +73,12 @@ let activeKind = null;
 // Bumped on every open, so a slow render that finishes after a newer open
 // started can tell it was superseded and leave the UI alone.
 let openSequence = 0;
+// File name of the open document, for the "<name>-annotated.pdf" suggestion
+// when saving marks. Empty until known (a dialog open learns it from the
+// recent list).
+let currentDisplayName = "";
+// PDF mark-up (set up below, before the first showEmptyState()).
+let annotationUi = null;
 
 function setStatus(message) {
   status.textContent = message;
@@ -135,6 +143,7 @@ function syncToolbarForKind(kind) {
   zoomResetBtn.hidden = kind === null;
   fullscreenBtn.hidden = kind === null;
   toolbarMenuWrap.hidden = kind === null;
+  annotationUi?.syncForKind(kind);
   if (isPdf) {
     syncLayoutSegment();
     syncScrollModeOptions();
@@ -217,8 +226,43 @@ async function showDocument(bytes) {
   if (sequence !== openSequence) return false;
   activeKind = kind;
   syncToolbarForKind(kind);
-  backStack.push("document", showEmptyState);
+  backStack.push("document", closeDocumentFromBack);
   return true;
+}
+
+// Back on an open document returns to the recent list, unless that would
+// throw away unsaved marks and the user says no. The back stack has already
+// dropped the "document" layer and is still in its popstate loop, so the
+// question is asked on the next tick with the layer put back meanwhile.
+function closeDocumentFromBack() {
+  if (!annotationUi?.hasUnsavedMarks()) {
+    showEmptyState();
+    return;
+  }
+  const sequence = openSequence;
+  setTimeout(async () => {
+    if (sequence !== openSequence || activeKind === null) return;
+    backStack.push("document", closeDocumentFromBack);
+    if (!(await annotationUi.confirmLeave())) return;
+    if (sequence === openSequence) showEmptyState();
+  }, 0);
+}
+
+async function confirmReplacingDocument() {
+  return annotationUi ? annotationUi.confirmLeave() : true;
+}
+
+// Learns the open document's file name. Recent entries hold the clean name
+// (the open has just been recorded there); a superseded open is ignored.
+function rememberDisplayName({ name = null, path = null } = {}) {
+  const sequence = openSequence;
+  currentDisplayName = pickDisplayName({ name, path });
+  invoke("get_recent_files").then((recentEntries) => {
+    if (sequence !== openSequence) return;
+    currentDisplayName = pickDisplayName({ name, path, recentEntries }) || currentDisplayName;
+  }).catch(() => {
+    // keep the provisional name; it only seeds the save dialog
+  });
 }
 
 async function openViaBytesResult(invokePromise) {
@@ -226,7 +270,10 @@ async function openViaBytesResult(invokePromise) {
   loadingIndicator.hidden = false;
   try {
     const bytes = await invokePromise;
-    if (await showDocument(bytes)) emit("file-opened", null);
+    if (await showDocument(bytes)) {
+      rememberDisplayName();
+      emit("file-opened", null);
+    }
   } catch (err) {
     reportOpenFailure(err, {
       documentShowing: activeKind !== null,
@@ -239,15 +286,21 @@ async function openViaBytesResult(invokePromise) {
 }
 
 async function handleOpenClick() {
+  // Asked before the file picker: the pick and the read are one command.
+  if (!(await confirmReplacingDocument())) return;
   await openViaBytesResult(invoke("open_document_file"));
 }
 
 async function handleOpenRequested({ path, name }) {
+  if (!(await confirmReplacingDocument())) return;
   setStatus("");
   loadingIndicator.hidden = false;
   try {
     const bytes = await invoke("open_document_path", { path, name: name ?? null });
-    if (await showDocument(bytes)) emit("file-opened", { path });
+    if (await showDocument(bytes)) {
+      rememberDisplayName({ name: name ?? null, path });
+      emit("file-opened", { path });
+    }
   } catch (err) {
     // Keeps the recent entry (see open-errors.js) and whatever is on screen;
     // a render failure has already torn the old document down (activeKind is
@@ -393,6 +446,11 @@ initFullscreen({
 
 initSidebar();
 initEmptyState();
+annotationUi = initAnnotationUi({
+  setStatus,
+  backStack,
+  getDisplayName: () => currentDisplayName,
+});
 showEmptyState();
 
 invoke("get_launch_path").then((path) => {

@@ -500,6 +500,34 @@ export function getOpenPdf() {
   return pdfDoc ? { doc: pdfDoc, numPages: pdfDoc.numPages } : null;
 }
 
+// The open document's original file bytes, for saving a marked-up copy.
+// renderPdf() cannot simply keep the Uint8Array it was given: PDF.js
+// transfers that buffer to its worker, which detaches (empties) it here. So
+// the bytes are asked back from the worker only when a save needs them,
+// instead of holding a second full copy for the whole session.
+export async function getOriginalPdfBytes() {
+  const doc = pdfDoc;
+  if (!doc) throw new Error("No PDF is open");
+  return doc.getData();
+}
+
+// Page-unit -> PDF user space converters (pdf.js convertToPdfPoint at scale
+// 1, so /Rotate and CropBox offsets are handled), in the shape
+// exportAnnotatedPdf() expects: an array indexed by pageNumber - 1. Only the
+// requested pages are filled in; the exporter skips missing entries.
+export async function getPageConverters(pageNumbers) {
+  const doc = pdfDoc;
+  if (!doc) throw new Error("No PDF is open");
+  const converters = [];
+  for (const pageNumber of new Set(pageNumbers)) {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > doc.numPages) continue;
+    const page = await doc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
+    converters[pageNumber - 1] = { toPdf: (x, y) => viewport.convertToPdfPoint(x, y) };
+  }
+  return converters;
+}
+
 function computeColumns(targetZoom) {
   const widestPage = pages.reduce((width, page) => Math.max(width, page.width), 0);
   const columns = computePageColumns(
@@ -1261,6 +1289,11 @@ container.addEventListener("touchstart", (event) => {
 
 container.addEventListener("touchmove", (event) => {
   if (!gesture || !pdfDoc) return;
+  // A mark-up tool owns one-finger touches (setPanEnabled(false) -> "idle"):
+  // leave them alone, so an ink stroke never pans and a long-press text
+  // selection can still be dragged. touch-action: none already stops native
+  // scrolling, so nothing else moves the page.
+  if (gesture.kind === "idle" && event.touches.length === 1) return;
   event.preventDefault();
 
   if (gesture.kind === "pan" && event.touches.length === 1) {
