@@ -815,6 +815,12 @@ body.drag-active #empty-state #empty-state-text {
     display: none;
   }
 
+  /* full screen adds nothing on phones: the app already hides the system
+     navigation bar */
+  #fullscreen-btn {
+    display: none;
+  }
+
   .toolbar-menu-zoom {
     display: block;
   }
