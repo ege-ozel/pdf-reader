@@ -106,6 +106,12 @@ if (target === "desktop") {
   artifact = publish(exe, `PDF-Reader-${version}-windows-x64-setup.exe`);
 } else {
   const env = androidEnv();
+  // The generated Android project is git-ignored; MainActivity (file-open
+  // intents, immersive mode) lives in src-tauri/android-overrides.
+  const activityDir = join(ROOT, "src-tauri", "gen", "android", "app", "src", "main", "java", "com", "d", "pdf_reader");
+  if (existsSync(activityDir)) {
+    copyFileSync(join(ROOT, "src-tauri", "android-overrides", "MainActivity.kt"), join(activityDir, "MainActivity.kt"));
+  }
   await run("tauri android build (arm64 apk)", "npx", ["tauri", "android", "build", "--apk", "--target", "aarch64"], env);
   const apk = newestArtifact(join(ROOT, "src-tauri", "gen", "android", "app", "build", "outputs", "apk"), /release\.apk$/);
   if (!apk) fail("build finished but no release .apk was produced");

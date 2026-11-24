@@ -112,10 +112,34 @@ button:focus-visible {
 }
 
 #status {
+  min-width: 0;
   color: var(--text-lo);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* On a phone the toolbar leaves the status almost no width, so an error
+   drops below the toolbar as a full-width banner and wraps there instead of
+   being cut to a few characters. */
+@media (max-width: 640px) {
+  #toolbar #status.status-error {
+    position: fixed;
+    top: calc(var(--toolbar-content-h) + env(safe-area-inset-top, 0px) + 6px);
+    left: 12px;
+    right: 12px;
+    z-index: 50;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--toolbar-tint);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    line-height: 1.35;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
 }
 
 #status.status-error {
@@ -1038,4 +1062,21 @@ body.is-fullscreen.pdf-active #fs-page-bar {
 
 #fs-page-bar button:disabled {
   opacity: 0.35;
+}
+
+.link-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+}
+
+.link-layer .pdf-link {
+  position: absolute;
+  display: block;
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(224, 160, 82, 0.3);
+}
+
+.link-layer .pdf-link:hover {
+  background: rgba(224, 160, 82, 0.18);
 }

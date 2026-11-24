@@ -20,12 +20,15 @@ import {
   initFullscreen,
   toggleFullscreen,
   isFullscreen,
+  exitFullscreen,
   updateFullscreenPage,
 } from "./fullscreen.js";
 import { detectDocumentKind, pickDroppedPath, LEGACY_DOC_MESSAGE } from "./document-kind.js";
 import { emit, on } from "./app-events.js";
 import { initSidebar } from "./sidebar.js";
 import { initEmptyState } from "./empty-state.js";
+import { getBackStack } from "./back-stack.js";
+import { reportOpenFailure } from "./open-errors.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebview } = window.__TAURI__.webview;
@@ -59,6 +62,10 @@ const emptyState = document.getElementById("empty-state");
 const viewerContainer = document.getElementById("viewer-container");
 const docxContainer = document.getElementById("docx-container");
 
+// Android Back closes the topmost of: page-nav popover, overflow menu, full
+// screen, sidebar drawer, open document (back to the recents/empty state).
+const backStack = getBackStack();
+
 // "pdf" | "docx" | null — which viewer currently shows a document.
 let activeKind = null;
 // Bumped on every open, so a slow render that finishes after a newer open
@@ -67,6 +74,7 @@ let openSequence = 0;
 
 function setStatus(message) {
   status.textContent = message;
+  status.title = message;
   status.classList.toggle("status-error", message.startsWith("Error"));
 }
 
@@ -86,6 +94,10 @@ function showEmptyState() {
   docxContainer.hidden = true;
   document.body.classList.remove("pdf-active");
   activeKind = null;
+  backStack.release("document");
+  closePageNav();
+  closeToolbarMenu();
+  exitFullscreen();
   syncToolbarForKind(null);
   closeDocx();
   closePdf().catch(() => {
@@ -129,19 +141,28 @@ function syncToolbarForKind(kind) {
   }
 }
 
+function openToolbarMenu() {
+  toolbarMenu.hidden = false;
+  toolbarMenuBtn.setAttribute("aria-expanded", "true");
+  backStack.push("toolbar-menu", closeToolbarMenu);
+}
+
 function closeToolbarMenu() {
   toolbarMenu.hidden = true;
   toolbarMenuBtn.setAttribute("aria-expanded", "false");
+  backStack.release("toolbar-menu");
 }
 
 function closePageNav() {
   pageNavPopover.hidden = true;
   pageNavBtn.setAttribute("aria-expanded", "false");
+  backStack.release("page-nav");
 }
 
 function openPageNav() {
   pageNavPopover.hidden = false;
   pageNavBtn.setAttribute("aria-expanded", "true");
+  backStack.push("page-nav", closePageNav);
   const current = getCurrentPage() ?? 1;
   pageNavInput.value = String(current);
   pageNavInput.max = String(getPageCount());
@@ -196,6 +217,7 @@ async function showDocument(bytes) {
   if (sequence !== openSequence) return false;
   activeKind = kind;
   syncToolbarForKind(kind);
+  backStack.push("document", showEmptyState);
   return true;
 }
 
@@ -206,9 +228,11 @@ async function openViaBytesResult(invokePromise) {
     const bytes = await invokePromise;
     if (await showDocument(bytes)) emit("file-opened", null);
   } catch (err) {
-    if (err === "cancelled") return;
-    setStatus(`Error: ${err}`);
-    showEmptyState();
+    reportOpenFailure(err, {
+      documentShowing: activeKind !== null,
+      setStatus,
+      showEmptyState,
+    });
   } finally {
     loadingIndicator.hidden = true;
   }
@@ -218,28 +242,21 @@ async function handleOpenClick() {
   await openViaBytesResult(invoke("open_document_file"));
 }
 
-async function handleOpenRequested({ path }) {
+async function handleOpenRequested({ path, name }) {
   setStatus("");
   loadingIndicator.hidden = false;
-  let bytes;
   try {
-    bytes = await invoke("open_document_path", { path });
-  } catch (err) {
-    setStatus(`Error: ${err}`);
-    loadingIndicator.hidden = true;
-    try {
-      await invoke("remove_recent_entry", { path });
-    } catch {
-      // best-effort cleanup; the read already failed, nothing more to do
-    }
-    emit("file-opened", null); // refresh sidebar to drop the dead entry
-    return;
-  }
-  try {
+    const bytes = await invoke("open_document_path", { path, name: name ?? null });
     if (await showDocument(bytes)) emit("file-opened", { path });
   } catch (err) {
-    setStatus(`Error: ${err}`);
-    showEmptyState(); // don't strand the UI on a blank viewer pane
+    // Keeps the recent entry (see open-errors.js) and whatever is on screen;
+    // a render failure has already torn the old document down (activeKind is
+    // null then), so that case still falls back to the empty state.
+    reportOpenFailure(err, {
+      documentShowing: activeKind !== null,
+      setStatus,
+      showEmptyState,
+    });
   } finally {
     loadingIndicator.hidden = true;
   }
@@ -256,6 +273,8 @@ function resetActiveZoom() {
 }
 
 function syncFullscreenButton(on) {
+  if (on) backStack.push("fullscreen", exitFullscreen);
+  else backStack.release("fullscreen");
   fullscreenBtn.setAttribute("aria-pressed", String(on));
   fullscreenBtn.title = on ? "Exit full screen" : "Full screen";
   fullscreenBtn.setAttribute("aria-label", on ? "Exit full screen" : "Enter full screen");
@@ -277,9 +296,8 @@ for (const option of layoutOptions) {
 }
 
 toolbarMenuBtn.addEventListener("click", () => {
-  const opening = toolbarMenu.hidden;
-  toolbarMenu.hidden = !opening;
-  toolbarMenuBtn.setAttribute("aria-expanded", String(opening));
+  if (toolbarMenu.hidden) openToolbarMenu();
+  else closeToolbarMenu();
 });
 for (const option of scrollModeOptions) {
   option.addEventListener("click", () => {
@@ -378,6 +396,23 @@ showEmptyState();
 invoke("get_launch_path").then((path) => {
   if (path) handleOpenRequested({ path });
 });
+
+// Android: another app (file manager, Drive/LinkedIn preview, share sheet)
+// handed us a document. MainActivity parks it behind the `AndroidIntent` bridge
+// and pings `android-open-document` when the app was already running.
+function openAndroidIntentDocument() {
+  const bridge = window.AndroidIntent;
+  if (!bridge?.consumeDocument) return;
+  let doc = null;
+  try {
+    doc = JSON.parse(bridge.consumeDocument() || "null");
+  } catch {
+    return;
+  }
+  if (doc?.uri) handleOpenRequested({ path: doc.uri, name: doc.name });
+}
+window.addEventListener("android-open-document", openAndroidIntentDocument);
+openAndroidIntentDocument();
 
 getCurrentWebview().onDragDropEvent((event) => {
   const type = event.payload.type;

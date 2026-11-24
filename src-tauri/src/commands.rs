@@ -20,12 +20,17 @@ pub fn read_file_bytes(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("Failed to read file: {e}"))
 }
 
-fn file_name_or_path(app: &tauri::AppHandle, file_path: &FilePath) -> Result<String, String> {
-    let path = file_path.to_string();
+/// Display name for the recent list. Prefers a name supplied by the caller
+/// (Android resolves the real one from the content provider); otherwise the
+/// last path segment, or a generic title when a `content://` URI has none.
+fn display_name(app: &tauri::AppHandle, file_path: &FilePath, given: Option<String>) -> String {
+    if let Some(name) = given.filter(|n| !n.trim().is_empty()) {
+        return name;
+    }
     app.path()
-        .file_name(&path)
+        .file_name(&file_path.to_string())
         .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| "Could not retrieve the document name from file metadata".to_string())
+        .unwrap_or_else(|| "Document".to_string())
 }
 
 /// Reads a document's bytes — via a direct filesystem read for a regular
@@ -47,6 +52,63 @@ fn read_bytes(app: &tauri::AppHandle, file_path: &FilePath) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
+/// Android content:// grants (file picker, "open with", share sheet) usually
+/// expire when the app restarts, so a recent entry pointing at the URI would
+/// fail to reopen. Keep a private copy of such documents and record that path.
+fn documents_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
+        .join("documents");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create documents dir: {e}"))?;
+    Ok(dir)
+}
+
+fn fnv1a(parts: &[&[u8]]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for part in parts {
+        for byte in *part {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+/// Stores `bytes` under a name derived from the document's name and size (so
+/// opening the same file again reuses one copy) and returns its path.
+fn store_private_copy(
+    app: &tauri::AppHandle,
+    name: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    let ext = if bytes.starts_with(b"%PDF") { "pdf" } else { "docx" };
+    let key = fnv1a(&[name.as_bytes(), &(bytes.len() as u64).to_le_bytes()]);
+    let path = documents_dir(app)?.join(format!("{key:016x}.{ext}"));
+    if fs::metadata(&path).map(|m| m.len() != bytes.len() as u64).unwrap_or(true) {
+        fs::write(&path, bytes).map_err(|e| format!("Failed to keep a copy of the file: {e}"))?;
+    }
+    Ok(path)
+}
+
+/// Deletes private copies that no recent entry points at any more.
+pub fn prune_private_copies(app: &tauri::AppHandle, entries: &[RecentEntry]) {
+    let Ok(dir) = documents_dir(app) else { return };
+    let Ok(read) = fs::read_dir(&dir) else { return };
+    for item in read.flatten() {
+        let path = item.path();
+        let keep = entries
+            .iter()
+            .any(|e| Path::new(&e.path) == path.as_path());
+        if !keep {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 /// Reads a document's bytes, records it in the recent-files list, and
 /// returns the bytes as an IPC response. Shared by both
 /// `open_document_file` (native dialog) and `open_document_path`
@@ -55,10 +117,20 @@ fn read_bytes(app: &tauri::AppHandle, file_path: &FilePath) -> Result<Vec<u8>, S
 fn open_filepath_and_record(
     app: &tauri::AppHandle,
     file_path: FilePath,
+    name: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
-    let path_str = file_path.to_string();
-    let name = file_name_or_path(app, &file_path)?;
+    let name = display_name(app, &file_path, name);
     let bytes = read_bytes(app, &file_path)?;
+    let is_plain_path = file_path.as_path().is_some();
+    let path_str = if is_plain_path {
+        file_path.to_string()
+    } else {
+        // Falls back to the URI itself if the copy cannot be written.
+        match store_private_copy(app, &name, &bytes) {
+            Ok(copy) => copy.to_string_lossy().into_owned(),
+            Err(_) => file_path.to_string(),
+        }
+    };
 
     let entries = recent_files::load(app);
     let entries = recent_files::upsert_and_trim(
@@ -69,6 +141,7 @@ fn open_filepath_and_record(
         recent_files::RECENT_CAP,
     );
     recent_files::save(app, &entries)?;
+    prune_private_copies(app, &entries);
 
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -84,7 +157,7 @@ pub async fn open_document_file(app: tauri::AppHandle) -> Result<tauri::ipc::Res
         .blocking_pick_file();
 
     match file_path {
-        Some(path) => open_filepath_and_record(&app, path),
+        Some(path) => open_filepath_and_record(&app, path, None),
         None => Err("cancelled".to_string()),
     }
 }
@@ -93,9 +166,10 @@ pub async fn open_document_file(app: tauri::AppHandle) -> Result<tauri::ipc::Res
 pub async fn open_document_path(
     app: tauri::AppHandle,
     path: String,
+    name: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     let file_path: FilePath = path.parse().expect("FilePath parsing is infallible");
-    open_filepath_and_record(&app, file_path)
+    open_filepath_and_record(&app, file_path, name)
 }
 
 /// Returns the document path passed on the command line, if any — this is
@@ -129,6 +203,7 @@ pub fn remove_recent_entry(
     let entries = recent_files::load(&app);
     let entries = recent_files::remove_entry(entries, &path);
     recent_files::save(&app, &entries)?;
+    prune_private_copies(&app, &entries);
     Ok(entries)
 }
 
