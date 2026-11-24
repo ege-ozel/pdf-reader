@@ -49,6 +49,73 @@ function initDrawer() {
   on("open-requested", () => setOpen(false));
 
   initSwipeToClose(document.getElementById("sidebar"), setOpen);
+  initEdgeSwipeToOpen(document.getElementById("sidebar"), appShell, setOpen);
+}
+
+// Drag the closed drawer open from the left screen edge (phones only, where
+// the sidebar is an off-canvas drawer). The drawer follows the finger; a
+// far-enough drag or a quick flick commits it open, otherwise it snaps back.
+// The touch is swallowed in the capture phase so the PDF viewer underneath
+// does not also pan with it.
+function initEdgeSwipeToOpen(sidebar, appShell, setOpen) {
+  const EDGE_PX = 24;
+  const OPEN_DISTANCE_RATIO = 0.35;
+  const FLICK_VELOCITY = 0.5; // px/ms rightward
+  const FLICK_MIN_DISTANCE = 24;
+  const narrow = window.matchMedia("(max-width: 640px)");
+  let tracking = null;
+
+  document.addEventListener("touchstart", (event) => {
+    if (!narrow.matches || event.touches.length !== 1) return;
+    if (appShell.classList.contains("sidebar-open")) return;
+    const touch = event.touches[0];
+    if (touch.clientX > EDGE_PX) return;
+    event.stopPropagation();
+    tracking = { startX: touch.clientX, startY: touch.clientY, lastX: touch.clientX, lastTime: event.timeStamp, velocity: 0, dragging: false };
+  }, { capture: true, passive: true });
+
+  document.addEventListener("touchmove", (event) => {
+    if (!tracking) return;
+    event.stopPropagation();
+    const touch = event.touches[0];
+    const width = sidebar.getBoundingClientRect().width;
+    const dx = touch.clientX - tracking.startX;
+    const dy = touch.clientY - tracking.startY;
+    if (!tracking.dragging) {
+      // vertical movement means it was a scroll, not an edge swipe
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) {
+        tracking = null;
+        return;
+      }
+      if (dx < 6) return;
+      tracking.dragging = true;
+      sidebar.style.transition = "none";
+    }
+    const dt = event.timeStamp - tracking.lastTime;
+    if (dt > 0) tracking.velocity = (touch.clientX - tracking.lastX) / dt;
+    tracking.lastX = touch.clientX;
+    tracking.lastTime = event.timeStamp;
+    const offset = Math.min(0, -width + Math.max(0, dx));
+    sidebar.style.transform = `translateX(${offset}px)`;
+    event.preventDefault();
+  }, { capture: true, passive: false });
+
+  const finish = (event) => {
+    if (!tracking) return;
+    event.stopPropagation();
+    const { dragging, startX, lastX, velocity } = tracking;
+    tracking = null;
+    if (!dragging) return;
+    sidebar.style.transition = "";
+    sidebar.style.transform = "";
+    const dx = lastX - startX;
+    const width = sidebar.getBoundingClientRect().width;
+    if (dx > width * OPEN_DISTANCE_RATIO || (dx > FLICK_MIN_DISTANCE && velocity > FLICK_VELOCITY)) {
+      setOpen(true);
+    }
+  };
+  document.addEventListener("touchend", finish, { capture: true });
+  document.addEventListener("touchcancel", finish, { capture: true });
 }
 
 // Lets a touch user drag the open drawer closed instead of only tapping the
