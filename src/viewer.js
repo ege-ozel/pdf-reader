@@ -635,6 +635,88 @@ function openExternalUrl(rawUrl) {
   }
 }
 
+// Long-press (touch) or right-click (mouse) on an external link offers
+// Open / Copy link, since the WebView has no built-in link menu.
+let linkMenuEl = null;
+
+function closeLinkMenu() {
+  linkMenuEl?.remove();
+  linkMenuEl = null;
+}
+
+function showLinkMenu(x, y, rawUrl) {
+  closeLinkMenu();
+  const menu = document.createElement("div");
+  menu.className = "link-menu";
+  const addItem = (label, action) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    item.addEventListener("click", () => {
+      closeLinkMenu();
+      action();
+    });
+    menu.append(item);
+  };
+  addItem("Open link", () => openExternalUrl(rawUrl));
+  addItem("Copy link", () => {
+    navigator.clipboard?.writeText(rawUrl).catch(() => {
+      reportError("Error: Could not copy the link");
+    });
+  });
+  document.body.append(menu);
+  const left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  linkMenuEl = menu;
+  // Dismiss on the next press anywhere outside the menu.
+  setTimeout(() => {
+    document.addEventListener("pointerdown", function dismiss(event) {
+      if (linkMenuEl && linkMenuEl.contains(event.target)) return;
+      document.removeEventListener("pointerdown", dismiss, true);
+      closeLinkMenu();
+    }, true);
+  }, 0);
+}
+
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 10;
+
+function attachLinkMenu(anchor, rawUrl) {
+  let timer = null;
+  let origin = null;
+  let fired = false;
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  anchor.addEventListener("touchstart", (event) => {
+    fired = false;
+    const touch = event.touches[0];
+    origin = { x: touch.clientX, y: touch.clientY };
+    cancel();
+    timer = setTimeout(() => {
+      fired = true;
+      showLinkMenu(origin.x, origin.y, rawUrl);
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+  anchor.addEventListener("touchmove", (event) => {
+    const touch = event.touches[0];
+    if (origin && Math.hypot(touch.clientX - origin.x, touch.clientY - origin.y) > LONG_PRESS_SLOP) cancel();
+  }, { passive: true });
+  anchor.addEventListener("touchend", (event) => {
+    cancel();
+    if (fired) event.preventDefault(); // the long press must not also follow the link
+  });
+  anchor.addEventListener("touchcancel", cancel);
+  anchor.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    showLinkMenu(event.clientX, event.clientY, rawUrl);
+  });
+  return () => fired;
+}
+
 async function followInternalDestination(doc, dest) {
   try {
     const explicit = typeof dest === "string" ? await doc.getDestination(dest) : dest;
@@ -682,8 +764,10 @@ async function mountLinkLayer(page, pageProxy, viewport, doc, generation, token)
     anchor.style.height = `${Math.abs(y2 - y1)}px`;
     const external = link.url || link.unsafeUrl;
     if (external) anchor.href = external;
+    const wasLongPress = external ? attachLinkMenu(anchor, external) : () => false;
     anchor.addEventListener("click", (event) => {
       event.preventDefault();
+      if (wasLongPress()) return;
       if (external) openExternalUrl(external);
       else if (link.dest) followInternalDestination(doc, link.dest);
       else if (link.action) followNamedAction(link.action);

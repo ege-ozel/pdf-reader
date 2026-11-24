@@ -627,8 +627,9 @@ body.drag-active #empty-state #empty-state-text {
    browser's native selection (long-press on touch) can select and copy. */
 .text-layer {
   position: absolute;
-  top: 0;
-  left: 0;
+  /* must cover the page: with no size the layer is 0x0 and overflow: clip
+     would hide (and make untouchable) every text span */
+  inset: 0;
   overflow: clip;
   line-height: 1;
   text-align: initial;
@@ -1102,4 +1103,38 @@ body.is-fullscreen.pdf-active #fs-page-bar {
   font-size: 12px;
   line-height: 1.4;
   opacity: 0.7;
+}
+
+.link-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-sidebar);
+  color: var(--text-hi);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
+.link-menu button {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.link-menu button:active {
+  background: var(--surface-hover);
+}
+
+.pdf-link {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
