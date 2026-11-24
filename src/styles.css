@@ -209,6 +209,10 @@ button:focus-visible {
   background: var(--accent-soft);
 }
 
+.fs-reading-icon {
+  display: none;
+}
+
 /* the full-screen button shows "enter" normally and "exit" while immersive */
 #fullscreen-btn .fs-exit-icon {
   display: none;
@@ -815,9 +819,22 @@ body.drag-active #empty-state #empty-state-text {
     display: none;
   }
 
-  /* full screen adds nothing on phones: the app already hides the system
-     navigation bar */
-  #fullscreen-btn {
+  /* On phones the full-screen button becomes "reading mode": a book icon,
+     and while reading only the text stays on screen (tap to bring the
+     controls back, or press Back). */
+  #fullscreen-btn .fs-enter-icon {
+    display: none;
+  }
+
+  #fullscreen-btn .fs-reading-icon {
+    display: block;
+  }
+
+  body.is-fullscreen #fullscreen-btn .fs-reading-icon {
+    display: none;
+  }
+
+  body.is-fullscreen:not(.controls-visible) #fs-page-bar {
     display: none;
   }
 

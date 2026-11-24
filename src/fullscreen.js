@@ -30,6 +30,12 @@ function tauriWindow() {
 }
 
 async function setNativeFullscreen(on) {
+  // Android: also hide the system status bar so only the text is left.
+  try {
+    window.AndroidIntent?.setReadingMode?.(on);
+  } catch {
+    // bridge unavailable; the CSS layout alone still works
+  }
   const win = tauriWindow();
   if (!win?.setFullscreen) return;
   try {

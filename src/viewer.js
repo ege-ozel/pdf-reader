@@ -107,7 +107,8 @@ function currentFitPageZoom() {
 }
 
 function minimumZoom() {
-  if (scrollMode === "paged") return currentFitPageZoom();
+  // Zooming out stays free in every mode (the fit button is the way back to a
+  // whole-page view), including paged mode.
   return isDualPageMode() ? MIN_DUAL_PAGE_ZOOM : MIN_SINGLE_PAGE_ZOOM;
 }
 
@@ -207,6 +208,7 @@ function updateView({ rerender = false, anchor = null } = {}) {
   clampPan();
   applyTransform();
   reportCurrentPage();
+  applyPagedVisibility();
   scheduleViewportRender();
   if (rerender) {
     if (anchor) pendingZoomAnchor = anchor;
@@ -223,6 +225,22 @@ function currentPageNumber() {
   const base = pagesWrapper.offsetTop + panY;
   const referenceY = containerInsets().top + 1;
   return pageAtY(pageRows, (referenceY - base) / scale);
+}
+
+// "One page at a time": only the current page (or spread) is shown, so the
+// next/previous page never peeks in above or below it. Continuous mode shows
+// every page.
+function applyPagedVisibility() {
+  if (!pdfDoc) return;
+  const paged = scrollMode === "paged";
+  const current = paged ? currentPageNumber() : null;
+  const step = isDualPageMode() ? 2 : 1;
+  for (const page of pages) {
+    if (!page.slot) continue;
+    const hide = paged && current != null &&
+      (page.pageNumber < current || page.pageNumber >= current + step);
+    page.slot.style.visibility = hide ? "hidden" : "";
+  }
 }
 
 function reportCurrentPage() {
@@ -456,6 +474,7 @@ export function setScrollMode(mode) {
   scrollMode = mode;
   pagesWrapper.classList.toggle("paged-mode", mode === "paged");
   if (!pdfDoc || pages.length === 0) return scrollMode;
+  applyPagedVisibility();
   if (mode === "paged") {
     const current = currentPageNumber() ?? 1;
     zoomLevel = currentFitPageZoom();
@@ -535,6 +554,13 @@ function makePageSlot(page, targetZoom, animate) {
   slot.style.top = `${page.layoutTop}px`;
   page.slot = slot;
   page.canvas = null;
+  if (scrollMode === "paged") {
+    const current = currentPageNumber();
+    const step = isDualPageMode() ? 2 : 1;
+    if (current != null && (page.pageNumber < current || page.pageNumber >= current + step)) {
+      slot.style.visibility = "hidden";
+    }
+  }
   return slot;
 }
 

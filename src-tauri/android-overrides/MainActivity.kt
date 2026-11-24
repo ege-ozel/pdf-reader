@@ -62,6 +62,16 @@ class MainActivity : TauriActivity() {
     return doc
   }
 
+  /** Reading mode: hide (or restore) the status bar; the nav bar is always hidden. */
+  @JavascriptInterface
+  fun setReadingMode(on: Boolean) {
+    runOnUiThread {
+      val controller = WindowInsetsControllerCompat(window, window.decorView)
+      if (on) controller.hide(WindowInsetsCompat.Type.statusBars())
+      else controller.show(WindowInsetsCompat.Type.statusBars())
+    }
+  }
+
   private fun documentUri(intent: Intent): Uri? {
     val action = intent.action
     if (action == Intent.ACTION_VIEW) return intent.data

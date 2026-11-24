@@ -276,8 +276,10 @@ function syncFullscreenButton(on) {
   if (on) backStack.push("fullscreen", exitFullscreen);
   else backStack.release("fullscreen");
   fullscreenBtn.setAttribute("aria-pressed", String(on));
-  fullscreenBtn.title = on ? "Exit full screen" : "Full screen";
-  fullscreenBtn.setAttribute("aria-label", on ? "Exit full screen" : "Enter full screen");
+  const phone = window.matchMedia("(max-width: 640px)").matches;
+  const noun = phone ? "reading mode" : "full screen";
+  fullscreenBtn.title = on ? `Exit ${noun}` : phone ? "Reading mode" : "Full screen";
+  fullscreenBtn.setAttribute("aria-label", on ? `Exit ${noun}` : `Enter ${noun}`);
 }
 
 function commitPageJump() {
