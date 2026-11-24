@@ -834,7 +834,8 @@ body.drag-active #empty-state #empty-state-text {
     display: none;
   }
 
-  body.is-fullscreen:not(.controls-visible) #fs-page-bar {
+  /* the later desktop rule has the same weight, so spell out .pdf-active */
+  body.is-fullscreen.pdf-active:not(.controls-visible) #fs-page-bar {
     display: none;
   }
 
