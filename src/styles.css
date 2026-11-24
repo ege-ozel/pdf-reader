@@ -226,6 +226,7 @@ body.is-fullscreen #fullscreen-btn .fs-exit-icon {
 .toolbar-nav-wrap {
   position: relative;
   display: inline-flex;
+  flex-shrink: 0;
 }
 
 .page-nav-btn {
@@ -234,10 +235,13 @@ body.is-fullscreen #fullscreen-btn .fs-exit-icon {
   padding: 0 9px;
   font-size: 0.9em;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 #page-nav-label {
   font-weight: 600;
+  white-space: nowrap;
 }
 
 #page-nav-popover {
@@ -271,7 +275,12 @@ body.is-fullscreen #fullscreen-btn .fs-exit-icon {
   text-align: center;
 }
 
+#page-nav-popover > * {
+  flex-shrink: 0;
+}
+
 #page-nav-total {
+  white-space: nowrap;
   color: var(--text-lo);
   font-size: 0.9em;
 }
@@ -786,6 +795,13 @@ body.drag-active #empty-state #empty-state-text {
 /* ---------- narrow screens: sidebar becomes an off-canvas drawer ---------- */
 
 @media (max-width: 640px) {
+  /* the pill sits near the right edge: open the popover leftwards so it stays
+     on screen */
+  #page-nav-popover {
+    left: auto;
+    right: 0;
+  }
+
   #app-title {
     display: none;
   }

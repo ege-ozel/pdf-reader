@@ -627,7 +627,9 @@ function openExternalUrl(rawUrl) {
   if (!EXTERNAL_LINK_PROTOCOLS.has(url.protocol)) return;
   const opener = window.__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url.href).catch(() => {});
+    opener.openUrl(url.href).catch(() => {
+      reportError(`Error: Could not open the link ${url.href}`);
+    });
   } else {
     window.open(url.href, "_blank", "noopener");
   }
