@@ -119,7 +119,18 @@ fn open_filepath_and_record(
     file_path: FilePath,
     name: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
-    let name = display_name(app, &file_path, name);
+    let existing = recent_files::load(app);
+    // Reopening a recent entry passes only its stored path (for content://
+    // documents that is the private copy, whose file name is a hash). Keep the
+    // name the entry already has instead of replacing it with that file name.
+    let name = match name.filter(|n| !n.trim().is_empty()) {
+        Some(given) => given,
+        None => existing
+            .iter()
+            .find(|e| e.path == file_path.to_string())
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| display_name(app, &file_path, None)),
+    };
     let bytes = read_bytes(app, &file_path)?;
     let is_plain_path = file_path.as_path().is_some();
     let path_str = if is_plain_path {
@@ -132,7 +143,7 @@ fn open_filepath_and_record(
         }
     };
 
-    let entries = recent_files::load(app);
+    let entries = existing;
     let entries = recent_files::upsert_and_trim(
         entries,
         &path_str,

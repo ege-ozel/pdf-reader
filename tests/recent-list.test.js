@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByPinned } from "../src/recent-list.js";
+import { groupByPinned, recentLimitNote } from "../src/recent-list.js";
 
 function entry(path, opened_at, pinned) {
   return { path, name: path, opened_at, pinned };
@@ -30,5 +30,16 @@ describe("groupByPinned", () => {
     const { pinned, recent } = groupByPinned([]);
     expect(pinned).toEqual([]);
     expect(recent).toEqual([]);
+  });
+});
+
+describe("recentLimitNote", () => {
+  it("stays quiet while far from the cap", () => {
+    expect(recentLimitNote(0)).toBeNull();
+    expect(recentLimitNote(14)).toBeNull();
+  });
+  it("warns when close to or at the cap", () => {
+    expect(recentLimitNote(15)).toMatch(/latest 20/);
+    expect(recentLimitNote(20)).toMatch(/Star a file/);
   });
 });

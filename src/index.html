@@ -55,12 +55,13 @@
           <path d="M20 20l-3.5-3.5" />
         </svg>
       </button>
-      <button id="fit-page-btn" class="icon-btn" title="Fit whole page" aria-label="Fit whole page" aria-pressed="false" hidden>
+      <button id="fit-page-btn" class="icon-btn" title="Fit and center the page" aria-label="Fit and center the page" aria-pressed="false" hidden>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 9V5a1 1 0 0 1 1-1h4" />
-          <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
-          <path d="M4 15v4a1 1 0 0 0 1 1h4" />
-          <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+          <path d="M12 3v18M3 12h18" />
+          <path d="M9 6l3-3 3 3" />
+          <path d="M9 18l3 3 3-3" />
+          <path d="M6 9l-3 3 3 3" />
+          <path d="M18 9l3 3-3 3" />
         </svg>
       </button>
       <button id="zoom-reset-btn" class="icon-btn" title="Fit width (reset zoom)" aria-label="Fit width and reset zoom" hidden>
@@ -76,6 +77,10 @@
           <path d="M21 9V3h-6" />
           <path d="M3 15v6h6" />
           <path d="M21 15v6h-6" />
+        </svg>
+        <svg class="fs-reading-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 5.5C5.5 4.2 8.5 4.2 12 6c3.5-1.8 6.5-1.8 9-.5V19c-2.5-1.3-5.5-1.3-9 .5-3.5-1.8-6.5-1.8-9-.5z" />
+          <path d="M12 6v13.5" />
         </svg>
         <svg class="fs-exit-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9 3v6H3" />
@@ -167,6 +172,7 @@
             Recent
           </h3>
           <div id="sidebar-recent"></div>
+          <p id="sidebar-recent-note" class="sidebar-note" hidden></p>
         </div>
       </aside>
       <div id="main-area">

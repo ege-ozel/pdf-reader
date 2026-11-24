@@ -1,4 +1,4 @@
-import { groupByPinned } from "./recent-list.js";
+import { groupByPinned, recentLimitNote } from "./recent-list.js";
 import { emit, on } from "./app-events.js";
 import { documentKindFromName } from "./document-kind.js";
 import { getBackStack } from "./back-stack.js";
@@ -125,6 +125,10 @@ async function refresh(openedPath) {
   if (openedPath !== undefined) activePath = openedPath ?? entries[0]?.path ?? null;
   render(pinnedContainer, pinned);
   render(recentContainer, recent);
+  const note = recentLimitNote(recent.length);
+  const noteEl = document.getElementById("sidebar-recent-note");
+  noteEl.textContent = note ?? "";
+  noteEl.hidden = note === null;
 }
 
 function render(container, entries) {

@@ -107,7 +107,8 @@ function currentFitPageZoom() {
 }
 
 function minimumZoom() {
-  if (scrollMode === "paged") return currentFitPageZoom();
+  // Zooming out stays free in every mode (the fit button is the way back to a
+  // whole-page view), including paged mode.
   return isDualPageMode() ? MIN_DUAL_PAGE_ZOOM : MIN_SINGLE_PAGE_ZOOM;
 }
 
@@ -207,6 +208,7 @@ function updateView({ rerender = false, anchor = null } = {}) {
   clampPan();
   applyTransform();
   reportCurrentPage();
+  applyPagedVisibility();
   scheduleViewportRender();
   if (rerender) {
     if (anchor) pendingZoomAnchor = anchor;
@@ -223,6 +225,22 @@ function currentPageNumber() {
   const base = pagesWrapper.offsetTop + panY;
   const referenceY = containerInsets().top + 1;
   return pageAtY(pageRows, (referenceY - base) / scale);
+}
+
+// "One page at a time": only the current page (or spread) is shown, so the
+// next/previous page never peeks in above or below it. Continuous mode shows
+// every page.
+function applyPagedVisibility() {
+  if (!pdfDoc) return;
+  const paged = scrollMode === "paged";
+  const current = paged ? currentPageNumber() : null;
+  const step = isDualPageMode() ? 2 : 1;
+  for (const page of pages) {
+    if (!page.slot) continue;
+    const hide = paged && current != null &&
+      (page.pageNumber < current || page.pageNumber >= current + step);
+    page.slot.style.visibility = hide ? "hidden" : "";
+  }
 }
 
 function reportCurrentPage() {
@@ -456,6 +474,7 @@ export function setScrollMode(mode) {
   scrollMode = mode;
   pagesWrapper.classList.toggle("paged-mode", mode === "paged");
   if (!pdfDoc || pages.length === 0) return scrollMode;
+  applyPagedVisibility();
   if (mode === "paged") {
     const current = currentPageNumber() ?? 1;
     zoomLevel = currentFitPageZoom();
@@ -535,6 +554,13 @@ function makePageSlot(page, targetZoom, animate) {
   slot.style.top = `${page.layoutTop}px`;
   page.slot = slot;
   page.canvas = null;
+  if (scrollMode === "paged") {
+    const current = currentPageNumber();
+    const step = isDualPageMode() ? 2 : 1;
+    if (current != null && (page.pageNumber < current || page.pageNumber >= current + step)) {
+      slot.style.visibility = "hidden";
+    }
+  }
   return slot;
 }
 
@@ -627,10 +653,94 @@ function openExternalUrl(rawUrl) {
   if (!EXTERNAL_LINK_PROTOCOLS.has(url.protocol)) return;
   const opener = window.__TAURI__?.opener;
   if (opener?.openUrl) {
-    opener.openUrl(url.href).catch(() => {});
+    opener.openUrl(url.href).catch(() => {
+      reportError(`Error: Could not open the link ${url.href}`);
+    });
   } else {
     window.open(url.href, "_blank", "noopener");
   }
+}
+
+// Long-press (touch) or right-click (mouse) on an external link offers
+// Open / Copy link, since the WebView has no built-in link menu.
+let linkMenuEl = null;
+
+function closeLinkMenu() {
+  linkMenuEl?.remove();
+  linkMenuEl = null;
+}
+
+function showLinkMenu(x, y, rawUrl) {
+  closeLinkMenu();
+  const menu = document.createElement("div");
+  menu.className = "link-menu";
+  const addItem = (label, action) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    item.addEventListener("click", () => {
+      closeLinkMenu();
+      action();
+    });
+    menu.append(item);
+  };
+  addItem("Open link", () => openExternalUrl(rawUrl));
+  addItem("Copy link", () => {
+    navigator.clipboard?.writeText(rawUrl).catch(() => {
+      reportError("Error: Could not copy the link");
+    });
+  });
+  document.body.append(menu);
+  const left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  linkMenuEl = menu;
+  // Dismiss on the next press anywhere outside the menu.
+  setTimeout(() => {
+    document.addEventListener("pointerdown", function dismiss(event) {
+      if (linkMenuEl && linkMenuEl.contains(event.target)) return;
+      document.removeEventListener("pointerdown", dismiss, true);
+      closeLinkMenu();
+    }, true);
+  }, 0);
+}
+
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 10;
+
+function attachLinkMenu(anchor, rawUrl) {
+  let timer = null;
+  let origin = null;
+  let fired = false;
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  anchor.addEventListener("touchstart", (event) => {
+    fired = false;
+    const touch = event.touches[0];
+    origin = { x: touch.clientX, y: touch.clientY };
+    cancel();
+    timer = setTimeout(() => {
+      fired = true;
+      showLinkMenu(origin.x, origin.y, rawUrl);
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+  anchor.addEventListener("touchmove", (event) => {
+    const touch = event.touches[0];
+    if (origin && Math.hypot(touch.clientX - origin.x, touch.clientY - origin.y) > LONG_PRESS_SLOP) cancel();
+  }, { passive: true });
+  anchor.addEventListener("touchend", (event) => {
+    cancel();
+    if (fired) event.preventDefault(); // the long press must not also follow the link
+  });
+  anchor.addEventListener("touchcancel", cancel);
+  anchor.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    showLinkMenu(event.clientX, event.clientY, rawUrl);
+  });
+  return () => fired;
 }
 
 async function followInternalDestination(doc, dest) {
@@ -680,8 +790,10 @@ async function mountLinkLayer(page, pageProxy, viewport, doc, generation, token)
     anchor.style.height = `${Math.abs(y2 - y1)}px`;
     const external = link.url || link.unsafeUrl;
     if (external) anchor.href = external;
+    const wasLongPress = external ? attachLinkMenu(anchor, external) : () => false;
     anchor.addEventListener("click", (event) => {
       event.preventDefault();
+      if (wasLongPress()) return;
       if (external) openExternalUrl(external);
       else if (link.dest) followInternalDestination(doc, link.dest);
       else if (link.action) followNamedAction(link.action);
