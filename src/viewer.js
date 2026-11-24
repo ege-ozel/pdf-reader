@@ -612,6 +612,87 @@ async function mountTextLayer(page, pageProxy, viewport, zoom, generation, token
   }
 }
 
+// Clickable hotspots for the PDF's link annotations: external URLs open in the
+// system browser, internal destinations jump to their page. Like the text
+// layer, failure here must never break the page itself.
+const EXTERNAL_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+function openExternalUrl(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (!EXTERNAL_LINK_PROTOCOLS.has(url.protocol)) return;
+  const opener = window.__TAURI__?.opener;
+  if (opener?.openUrl) {
+    opener.openUrl(url.href).catch(() => {});
+  } else {
+    window.open(url.href, "_blank", "noopener");
+  }
+}
+
+async function followInternalDestination(doc, dest) {
+  try {
+    const explicit = typeof dest === "string" ? await doc.getDestination(dest) : dest;
+    if (!Array.isArray(explicit) || explicit.length === 0) return;
+    const target = explicit[0];
+    const index = typeof target === "object" && target !== null
+      ? await doc.getPageIndex(target)
+      : target;
+    if (doc === pdfDoc && Number.isInteger(index)) goToPage(index + 1);
+  } catch {
+    // a broken destination just does nothing
+  }
+}
+
+function followNamedAction(action) {
+  const current = currentPageNumber() ?? 1;
+  if (action === "NextPage") goToPage(current + 1);
+  else if (action === "PrevPage") goToPage(current - 1);
+  else if (action === "FirstPage") goToPage(1);
+  else if (action === "LastPage") goToPage(pdfDoc?.numPages ?? current);
+}
+
+async function mountLinkLayer(page, pageProxy, viewport, doc, generation, token) {
+  let annotations;
+  try {
+    annotations = await pageProxy.getAnnotations({ intent: "display" });
+  } catch {
+    return;
+  }
+  const links = annotations.filter(
+    (a) => a.subtype === "Link" && (a.url || a.unsafeUrl || a.dest || a.action),
+  );
+  if (links.length === 0) return;
+  const layer = document.createElement("div");
+  layer.className = "link-layer";
+  for (const link of links) {
+    if (!Array.isArray(link.rect) || link.rect.length < 4) continue;
+    const [x1, y1] = viewport.convertToViewportPoint(link.rect[0], link.rect[1]);
+    const [x2, y2] = viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
+    const anchor = document.createElement("a");
+    anchor.className = "pdf-link";
+    anchor.style.left = `${Math.min(x1, x2)}px`;
+    anchor.style.top = `${Math.min(y1, y2)}px`;
+    anchor.style.width = `${Math.abs(x2 - x1)}px`;
+    anchor.style.height = `${Math.abs(y2 - y1)}px`;
+    const external = link.url || link.unsafeUrl;
+    if (external) anchor.href = external;
+    anchor.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (external) openExternalUrl(external);
+      else if (link.dest) followInternalDestination(doc, link.dest);
+      else if (link.action) followNamedAction(link.action);
+    });
+    layer.append(anchor);
+  }
+  if (generation === renderGeneration && token === page.renderToken && page.slot) {
+    page.slot.append(layer);
+  }
+}
+
 async function renderPage(page, generation) {
   if (generation !== renderGeneration || !page.slot || page.canvas || page.rendering) return;
   page.rendering = true;
@@ -684,6 +765,9 @@ async function renderPage(page, generation) {
 
     if (generation === renderGeneration && token === page.renderToken && page.canvas === canvas) {
       await mountTextLayer(page, pageProxy, viewport, targetZoom, generation, token);
+      if (generation === renderGeneration && token === page.renderToken && page.canvas === canvas) {
+        await mountLinkLayer(page, pageProxy, viewport, doc, generation, token);
+      }
     }
 
     if (generation === renderGeneration && token === page.renderToken && page.canvas === canvas) {

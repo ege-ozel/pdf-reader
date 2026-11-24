@@ -1,6 +1,7 @@
 import { groupByPinned } from "./recent-list.js";
 import { emit, on } from "./app-events.js";
 import { documentKindFromName } from "./document-kind.js";
+import { getBackStack } from "./back-stack.js";
 
 const { invoke } = window.__TAURI__.core;
 
@@ -23,10 +24,7 @@ function initDrawer() {
   const toggleBtn = document.getElementById("sidebar-toggle-btn");
   const backdrop = document.getElementById("sidebar-backdrop");
 
-  // true while a close is being driven by a popstate (i.e. the Android back
-  // button/gesture), so setOpen doesn't also try to pop a history entry
-  // that's already in the middle of being consumed by that navigation.
-  let closingViaHistory = false;
+  const backStack = getBackStack();
 
   const setOpen = (open) => {
     const wasOpen = appShell.classList.contains("sidebar-open");
@@ -34,25 +32,14 @@ function initDrawer() {
     appShell.classList.toggle("sidebar-open", open);
     toggleBtn.setAttribute("aria-expanded", String(open));
 
-    // Tauri's Android shell maps the hardware/gesture back button to
-    // WebView.goBack(), which only fires if there's same-document history to
-    // go back to. Pushing an entry while the drawer is open means back
-    // closes the drawer first instead of leaving/exiting the app; closing it
-    // any other way pops that entry again so the history stack stays clean.
-    if (open) {
-      history.pushState({ sidebarOpen: true }, "");
-    } else if (!closingViaHistory && history.state?.sidebarOpen) {
-      history.back();
-    }
+    // The open drawer is a back-stack layer (see back-stack.js), so the
+    // Android back button/gesture closes it first instead of leaving the
+    // app; closing it any other way drops its history entry again. When Back
+    // itself closes it, the stack has already removed the layer, so this
+    // release is a no-op.
+    if (open) backStack.push("sidebar", () => setOpen(false));
+    else backStack.release("sidebar");
   };
-
-  window.addEventListener("popstate", () => {
-    if (appShell.classList.contains("sidebar-open")) {
-      closingViaHistory = true;
-      setOpen(false);
-      closingViaHistory = false;
-    }
-  });
 
   toggleBtn.addEventListener("click", () => {
     setOpen(!appShell.classList.contains("sidebar-open"));
@@ -209,8 +196,8 @@ function renderRow(entry) {
   pinBtn.innerHTML = entry.pinned
     ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z" /></svg>`
     : `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z" /></svg>`;
-  pinBtn.title = entry.pinned ? "Unpin" : "Pin";
-  pinBtn.setAttribute("aria-label", `${entry.pinned ? "Unpin" : "Pin"} ${entry.name}`);
+  pinBtn.title = entry.pinned ? "Unstar" : "Star";
+  pinBtn.setAttribute("aria-label", `${entry.pinned ? "Unstar" : "Star"} ${entry.name}`);
   pinBtn.addEventListener("click", async (event) => {
     event.stopPropagation();
     await invoke("toggle_pin", { path: entry.path });
